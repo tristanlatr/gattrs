@@ -256,6 +256,64 @@ class Encoder:
         self.nodes[nid] = {"metadata": {}}
         return nid
 
+    # ------------- refactored helpers for encode -----------------
+
+    def _encode_node_reference(self, meta: Dict[str, Any], name: str, val: Any, src_id: str, stack: List[Any]) -> None:
+        """Encode a direct node reference field."""
+        tgt_id = self.register_node(val)
+        self.hyperedges.append({"source": [src_id], "target": [tgt_id], "relation": name})
+        if id(val) not in self._processed:
+            stack.append(val)
+
+    def _encode_special_types(self, meta: Dict[str, Any], name: str, val: Any) -> bool:
+        """Handle the many special types that map to simple metadata representations.
+        Returns True if handled and set into meta, False if not handled here.
+        """
+        if isinstance(val, (bytes, bytearray, memoryview)):
+            b = bytes(val)
+            meta[name] = list(b)
+            return True
+        if isinstance(val, complex):
+            meta[name] = {"real": val.real, "imag": val.imag}
+            return True
+        if isinstance(val, Decimal):
+            meta[name] = str(val)
+            return True
+        if isinstance(val, Fraction):
+            meta[name] = {"numerator": val.numerator, "denominator": val.denominator}
+            return True
+        if isinstance(val, uuid.UUID):
+            meta[name] = str(val)
+            return True
+        if isinstance(val, (pathlib.PurePath, pathlib.Path)):
+            meta[name] = str(val)
+            return True
+        if isinstance(val, datetime):
+            meta[name] = val.isoformat()
+            return True
+        if isinstance(val, timedelta):
+            meta[name] = int(val.total_seconds() * 1000)
+            return True
+        if isinstance(val, array.array):
+            meta[name] = list(val)
+            return True
+        if isinstance(val, range):
+            meta[name] = list(val)
+            return True
+        if isinstance(val, (defaultdict, OrderedDict, MappingProxyType)):
+            meta[name] = dict(val)
+            return True
+        if isinstance(val, deque):
+            meta[name] = list(val)
+            return True
+        if isinstance(val, SimpleNamespace):
+            meta[name] = vars(val)
+            return True
+        if isinstance(val, enum.Enum):
+            meta[name] = val.value
+            return True
+        return False
+
     def _encode_container_field(self, meta: Dict[str, Any], name: str, val: Any, src_id: str, stack: List[Any]) -> None:
         """Handle dict/list/tuple/set containers uniformly, creating hyperedges for nested nodes
         and placing primitive metadata where appropriate. Mutates meta and hyperedges and may
@@ -326,6 +384,35 @@ class Encoder:
         # fallback for other container-like objects: just try to serialize
         meta[name] = _serialize_meta_value(val)
 
+    def _encode_field(self, meta: Dict[str, Any], name: str, val: Any, src_id: str, stack: List[Any]) -> None:
+        """Encode a single field of an attrs object into metadata/hyperedges."""
+        # don't emit None values into metadata
+        if val is None:
+            return
+
+        # node reference (direct)
+        if _is_attrs_instance(val):
+            self._encode_node_reference(meta, name, val, src_id, stack)
+            return
+
+        # container types: reuse helper (handles nested nodes)
+        if isinstance(val, (dict, list, tuple, set, frozenset)):
+            self._encode_container_field(meta, name, val, src_id, stack)
+            return
+
+        # special & primitive types
+        if self._encode_special_types(meta, name, val):
+            return
+
+        # defensive: if this value (arbitrary object) contains nested attrs nodes,
+        # re-route to container handler so we create hyperedges instead of trying to
+        # _serialize_meta_value() on node instances.
+        if _value_contains_attrs_node(val):
+            self._encode_container_field(meta, name, val, src_id, stack)
+        else:
+            meta[name] = _serialize_meta_value(val)
+
+    # ---------------- main encode ----------------
     def encode(self, root: Any) -> Dict[str, Any]:
         if not _is_attrs_instance(root):
             raise TypeError("encode() expects an attrs instance as root")
@@ -345,79 +432,7 @@ class Encoder:
             for field in attrs.fields(obj.__class__):
                 name = field.name
                 val = getattr(obj, name)
-
-                # don't emit None values into metadata
-                if val is None:
-                    continue
-
-                # node reference (direct)
-                if _is_attrs_instance(val):
-                    tgt_id = self.register_node(val)
-                    self.hyperedges.append({"source": [src_id], "target": [tgt_id], "relation": name})
-                    if id(val) not in self._processed:
-                        stack.append(val)
-                    continue
-
-                # container types: reuse helper (handles nested nodes)
-                if isinstance(val, (dict, list, tuple, set, frozenset)):
-                    self._encode_container_field(meta, name, val, src_id, stack)
-                    continue
-
-                # special types
-                if isinstance(val, (bytes, bytearray, memoryview)):
-                    b = bytes(val)
-                    meta[name] = list(b)
-                    continue
-                if isinstance(val, complex):
-                    meta[name] = {"real": val.real, "imag": val.imag}
-                    continue
-                if isinstance(val, Decimal):
-                    meta[name] = str(val)
-                    continue
-                if isinstance(val, Fraction):
-                    meta[name] = {"numerator": val.numerator, "denominator": val.denominator}
-                    continue
-                if isinstance(val, uuid.UUID):
-                    meta[name] = str(val)
-                    continue
-                if isinstance(val, (pathlib.PurePath, pathlib.Path)):
-                    meta[name] = str(val)
-                    continue
-                if isinstance(val, datetime):
-                    meta[name] = val.isoformat()
-                    continue
-                if isinstance(val, timedelta):
-                    meta[name] = int(val.total_seconds() * 1000)
-                    continue
-                if isinstance(val, array.array):
-                    meta[name] = list(val)
-                    continue
-                if isinstance(val, range):
-                    meta[name] = list(val)
-                    continue
-                if isinstance(val, (defaultdict, OrderedDict, MappingProxyType)):
-                    meta[name] = dict(val)
-                    continue
-                if isinstance(val, deque):
-                    meta[name] = list(val)
-                    continue
-                if isinstance(val, SimpleNamespace):
-                    meta[name] = vars(val)
-                    continue
-
-                # enums and flags
-                if isinstance(val, enum.Enum):
-                    meta[name] = val.value
-                    continue
-
-                # fallback: primitives and others
-                # defensive: if this value (arbitrary object) contains nested attrs nodes,
-                # re-route to container handler so we create hyperedges instead of trying to
-                # _serialize_meta_value() on node instances.
-                if _value_contains_attrs_node(val):
-                    self._encode_container_field(meta, name, val, src_id, stack)
-                else:
-                    meta[name] = _serialize_meta_value(val)
+                self._encode_field(meta, name, val, src_id, stack)
 
             self.nodes[src_id]["metadata"] = meta
             # mark processed to avoid reprocessing during cycles
@@ -434,6 +449,7 @@ class Decoder:
         self.node_objs: Dict[str, Any] = {}
         self.node_types: Dict[str, Any] = {}
 
+    # ---------------- input loading ----------------
     def _load_input(self, data: Any) -> Dict[str, Any]:
         if hasattr(data, "read"):
             text = data.read()
@@ -444,23 +460,9 @@ class Decoder:
             return data
         raise TypeError("Unsupported input to decode()")
 
-    def decode(self, data: Any, objtype: type) -> Any:
-        payload = self._load_input(data)
-        if "graph" not in payload:
-            raise ValueError("missing 'graph' in payload")
-        graph = payload["graph"]
-        nodes = graph.get("nodes", {})
-        hyperedges = graph.get("hyperedges", [])
-
-        # root is node '1'
-        if "1" not in nodes:
-            raise ValueError("no node '1' in graph")
-
-        # assign root type
-        self.node_types["1"] = objtype
-
-        # propagate types from hyperedges
-        # do iterative propagation starting from known types
+    # ---------------- type propagation ----------------
+    def _propagate_types(self, hyperedges: List[Dict[str, Any]]) -> None:
+        """Propagate node types from known nodes through hyperedges."""
         changed = True
         while changed:
             changed = False
@@ -518,8 +520,7 @@ class Decoder:
                                     if a is not type(None):
                                         elem_type = a
                                         break
-                        # if elem_type is a Union (PEP 604 or typing.Union), pick a concrete attrs
-                        # type option if present
+                        # choose attrs-decorated concrete type where applicable
                         from typing import Union as TypingUnion
                         import types as _types
                         UnionType = getattr(_types, "UnionType", None)
@@ -546,6 +547,9 @@ class Decoder:
                                 changed = True
                             changed = True
 
+    # ---------------- instantiate nodes ----------------
+    def _instantiate_nodes(self, nodes: Dict[str, Any], hyperedges: List[Dict[str, Any]]) -> None:
+        """Create node objects using metadata, validating keys and preparing containers."""
         # Precompute which (node, relation) pairs have hyperedges so we can decide whether
         # to keep tuple fields as mutable lists during instantiation.
         edges_by_source: Dict[str, set] = defaultdict(set)
@@ -640,7 +644,9 @@ class Decoder:
             obj = ntype(**kwargs)
             self.node_objs[nid] = obj
 
-        # Now apply hyperedges to build relations
+    # ---------------- apply hyperedges ----------------
+    def _apply_hyperedges(self, hyperedges: List[Dict[str, Any]]) -> None:
+        """Attach node references according to hyperedges."""
         # Helper to set container entries
         tuple_build: Dict[Tuple[str, str], Dict[int, Any]] = {}
         for edge in hyperedges:
@@ -725,7 +731,7 @@ class Decoder:
                 # single value
                 setattr(src_obj, rel, tgt_obj)
 
-        # finalize tuples and frozensets
+        # finalize tuples collected in tuple_build
         for (src, rel), items in tuple_build.items():
             lst = [v for k, v in sorted(items.items())]
             # if object already has a list for this rel, merge into it
@@ -741,7 +747,9 @@ class Decoder:
             else:
                 setattr(self.node_objs[src], rel, tuple(lst))
 
-        # FINALIZE tuple and frozenset fields (ALWAYS)
+    # ---------------- finalize ----------------
+    def _finalize_containers(self) -> None:
+        """Convert temporary lists back to tuples/frozensets where appropriate."""
         for obj in self.node_objs.values():
             if not _is_attrs_instance(obj):
                 continue
@@ -773,6 +781,33 @@ class Decoder:
                     elif isinstance(val, set):
                         setattr(obj, f.name, frozenset(val))
 
+    # ---------------- main decode ----------------
+    def decode(self, data: Any, objtype: type) -> Any:
+        payload = self._load_input(data)
+        if "graph" not in payload:
+            raise ValueError("missing 'graph' in payload")
+        graph = payload["graph"]
+        nodes = graph.get("nodes", {})
+        hyperedges = graph.get("hyperedges", [])
+
+        # root is node '1'
+        if "1" not in nodes:
+            raise ValueError("no node '1' in graph")
+
+        # assign root type
+        self.node_types["1"] = objtype
+
+        # propagate types from hyperedges
+        self._propagate_types(hyperedges)
+
+        # instantiate nodes with metadata
+        self._instantiate_nodes(nodes, hyperedges)
+
+        # apply hyperedges
+        self._apply_hyperedges(hyperedges)
+
+        # finalize tuple and frozenset fields
+        self._finalize_containers()
 
         # return root
         return self.node_objs["1"]
