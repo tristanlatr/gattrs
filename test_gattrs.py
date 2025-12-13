@@ -456,3 +456,21 @@ def test_other_builtin_types_and_mapping_variants_roundtrip():
     assert decoded.ns.x == ns.x
     assert decoded.tdict == tdict
     assert decoded.flag == flag
+
+@attrs.define
+class HeterogenTuples():
+    tup1: tuple[int, str, float, HeterogenTuples]
+    tup2: tuple[int | HeterogenTuples | None, ...]
+    
+def test_tuples_heterogenous_types():
+    a = HeterogenTuples((), ())
+    b = HeterogenTuples((1, "x", 2.0, a), (a, None, 3,))
+
+    encoded = gattrs.encode(b)
+    decoded = gattrs.decode(encoded, HeterogenTuples)
+
+    assert isinstance(decoded, HeterogenTuples)
+    assert decoded == b
+    assert decoded.tup1[0] == 1
+    assert decoded.tup1[3] is decoded.tup2[0]
+
