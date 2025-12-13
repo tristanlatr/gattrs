@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://jsongraphformat.info/v2.0/json-graph-schema.json",
+  "title": "JSON Graph Schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "graph": { "$ref": "#/definitions/graph" }
+      },
+      "additionalProperties": false,
+      "required": [
+        "graph"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "graphs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/graph" }
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "directed": { "type": [ "boolean" ], "default": true },
+        "type": { "type": "string" },
+        "metadata": { "type": [ "object" ] },
+        "nodes": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/node" }
+        },
+        "hyperedges": {
+          "type": [ "array" ],
+          "items": { "$ref": "#/definitions/directedhyperedge" }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "metadata": { "type": "object" }
+      }
+    },
+    "directedhyperedge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "array", "items": { "type": "string" } },
+        "target": { "type": "array", "items": { "type": "string" } },
+        "relation": { "type": "string" },
+        "label": { "type": "string" },
+        "metadata": { "type": [ "object" ] }
+      },
+      "required": [ "source", "target" ]
+    }
+  }
+}
