@@ -18,6 +18,17 @@ def _is_attrs_instance(obj: Any) -> bool:
     return hasattr(obj.__class__, "__attrs_attrs__")
 
 
+def _value_contains_attrs_node(v: Any) -> bool:
+    """Recursively detect whether a value contains any attrs-decorated instances."""
+    if _is_attrs_instance(v):
+        return True
+    if isinstance(v, dict):
+        return any(_value_contains_attrs_node(x) for x in v.values())
+    if isinstance(v, (list, tuple, set, frozenset)):
+        return any(_value_contains_attrs_node(x) for x in v)
+    return False
+
+
 def _format_expected(t):
     from typing import get_origin, get_args, Union
     import types as _types
@@ -245,6 +256,76 @@ class Encoder:
         self.nodes[nid] = {"metadata": {}}
         return nid
 
+    def _encode_container_field(self, meta: Dict[str, Any], name: str, val: Any, src_id: str, stack: List[Any]) -> None:
+        """Handle dict/list/tuple/set containers uniformly, creating hyperedges for nested nodes
+        and placing primitive metadata where appropriate. Mutates meta and hyperedges and may
+        append nested node objects to stack for traversal.
+        """
+        # dict
+        if isinstance(val, dict):
+            # if any value is an attrs node -> edges
+            if any(_is_attrs_instance(v) for v in val.values()):
+                meta_dict = {}
+                for k, v in val.items():
+                    if _is_attrs_instance(v):
+                        tgt = self.register_node(v)
+                        edge = {"source": [src_id], "target": [tgt], "relation": name, "metadata": {"key": k}}
+                        self.hyperedges.append(edge)
+                        if id(v) not in self._processed:
+                            stack.append(v)
+                    else:
+                        meta_dict[k] = _serialize_meta_value(v)
+                if meta_dict:
+                    meta[name] = meta_dict
+            else:
+                meta[name] = {k: _serialize_meta_value(v) for k, v in val.items()}
+            return
+
+        # list/tuple
+        if isinstance(val, (list, tuple)):
+            if any(_is_attrs_instance(e) for e in val):
+                meta_list = []
+                saw_non_node = False
+                for idx, e in enumerate(val):
+                    if _is_attrs_instance(e):
+                        tgt = self.register_node(e)
+                        edge = {"source": [src_id], "target": [tgt], "relation": name, "metadata": {"index": idx}}
+                        self.hyperedges.append(edge)
+                        if id(e) not in self._processed:
+                            stack.append(e)
+                        meta_list.append(None)
+                    else:
+                        meta_list.append(_serialize_meta_value(e))
+                        saw_non_node = True
+                if saw_non_node:
+                    meta[name] = meta_list
+            else:
+                meta[name] = [_serialize_meta_value(e) for e in val]
+            return
+
+        # set/frozenset
+        if isinstance(val, (set, frozenset)):
+            if any(_is_attrs_instance(e) for e in val):
+                primitives = []
+                for e in val:
+                    if _is_attrs_instance(e):
+                        tgt = self.register_node(e)
+                        edge = {"source": [src_id], "target": [tgt], "relation": name}
+                        self.hyperedges.append(edge)
+                        if id(e) not in self._processed:
+                            stack.append(e)
+                    else:
+                        primitives.append(_serialize_meta_value(e))
+                if primitives:
+                    meta[name] = sorted(primitives, key=lambda x: str(x))
+            else:
+                # deterministic ordering: serialize elements and sort by str
+                meta[name] = [_serialize_meta_value(e) for e in sorted(val, key=lambda x: str(_serialize_meta_value(x)))]
+            return
+
+        # fallback for other container-like objects: just try to serialize
+        meta[name] = _serialize_meta_value(val)
+
     def encode(self, root: Any) -> Dict[str, Any]:
         if not _is_attrs_instance(root):
             raise TypeError("encode() expects an attrs instance as root")
@@ -269,7 +350,7 @@ class Encoder:
                 if val is None:
                     continue
 
-                # node reference
+                # node reference (direct)
                 if _is_attrs_instance(val):
                     tgt_id = self.register_node(val)
                     self.hyperedges.append({"source": [src_id], "target": [tgt_id], "relation": name})
@@ -277,70 +358,9 @@ class Encoder:
                         stack.append(val)
                     continue
 
-                # dict
-                if isinstance(val, dict):
-                    # if any value is an attrs node -> edges
-                    if any(_is_attrs_instance(v) for v in val.values()):
-                        meta_dict = {}
-                        for k, v in val.items():
-                            if _is_attrs_instance(v):
-                                tgt = self.register_node(v)
-                                edge = {"source": [src_id], "target": [tgt], "relation": name, "metadata": {"key": k}}
-                                self.hyperedges.append(edge)
-                                if id(v) not in self._processed:
-                                    stack.append(v)
-                            else:
-                                meta_dict[k] = _serialize_meta_value(v)
-                        if meta_dict:
-                            meta[name] = meta_dict
-                        # continue processing next field
-                    else:
-                        # else serialize dict
-                        # serialize nested metadata values
-                        meta[name] = {k: _serialize_meta_value(v) for k, v in val.items()}
-                        continue
-
-                # list/tuple
-                if isinstance(val, (list, tuple)):
-                    if any(_is_attrs_instance(e) for e in val):
-                        # collect metadata for non-node elements, placeholders for node entries
-                        meta_list = []
-                        saw_non_node = False
-                        for idx, e in enumerate(val):
-                            if _is_attrs_instance(e):
-                                tgt = self.register_node(e)
-                                edge = {"source": [src_id], "target": [tgt], "relation": name, "metadata": {"index": idx}}
-                                self.hyperedges.append(edge)
-                                if id(e) not in self._processed:
-                                    stack.append(e)
-                                meta_list.append(None)
-                            else:
-                                meta_list.append(_serialize_meta_value(e))
-                                saw_non_node = True
-                        if saw_non_node:
-                            meta[name] = meta_list
-                    else:
-                        meta[name] = [_serialize_meta_value(e) for e in val]
-                    continue
-
-                # set/frozenset
-                if isinstance(val, (set, frozenset)):
-                    if any(_is_attrs_instance(e) for e in val):
-                        # collect primitive elements for metadata; node elements become edges
-                        primitives = []
-                        for e in val:
-                            if _is_attrs_instance(e):
-                                tgt = self.register_node(e)
-                                edge = {"source": [src_id], "target": [tgt], "relation": name}
-                                self.hyperedges.append(edge)
-                                if id(e) not in self._processed:
-                                    stack.append(e)
-                            else:
-                                primitives.append(_serialize_meta_value(e))
-                        if primitives:
-                            meta[name] = sorted(primitives, key=lambda x: str(x))
-                    else:
-                        meta[name] = [_serialize_meta_value(e) for e in sorted(val, key=lambda x: str(_serialize_meta_value(x)))]
+                # container types: reuse helper (handles nested nodes)
+                if isinstance(val, (dict, list, tuple, set, frozenset)):
+                    self._encode_container_field(meta, name, val, src_id, stack)
                     continue
 
                 # special types
@@ -391,7 +411,13 @@ class Encoder:
                     continue
 
                 # fallback: primitives and others
-                meta[name] = _serialize_meta_value(val)
+                # defensive: if this value (arbitrary object) contains nested attrs nodes,
+                # re-route to container handler so we create hyperedges instead of trying to
+                # _serialize_meta_value() on node instances.
+                if _value_contains_attrs_node(val):
+                    self._encode_container_field(meta, name, val, src_id, stack)
+                else:
+                    meta[name] = _serialize_meta_value(val)
 
             self.nodes[src_id]["metadata"] = meta
             # mark processed to avoid reprocessing during cycles
@@ -520,6 +546,12 @@ class Decoder:
                                 changed = True
                             changed = True
 
+        # Precompute which (node, relation) pairs have hyperedges so we can decide whether
+        # to keep tuple fields as mutable lists during instantiation.
+        edges_by_source: Dict[str, set] = defaultdict(set)
+        for edge in hyperedges:
+            edges_by_source[edge["source"][0]].add(edge["relation"])
+
         # instantiate nodes with metadata
         for nid, node in nodes.items():
             nmeta = node.get("metadata", {})
@@ -551,15 +583,21 @@ class Decoder:
                     val = nmeta[fname]
                     # validate and convert
                     origin = get_origin(ftype)
-                    # Special-case tuple: keep as list to allow inserting node refs
+                    # Special-case tuple: convert to tuple when no hyperedges will attach and no node elements
                     if origin is tuple:
                         args = get_args(ftype)
+                        will_have_edges = fname in edges_by_source.get(nid, set())
                         if args and len(args) == 2 and args[1] is Ellipsis:
                             # variable-length homogeneous tuple Tuple[T, ...]
                             inner = args[0]
                             if not isinstance(val, list):
                                 raise ValueError(f"attribute '{fname}'. expected list to build tuple")
-                            kwargs[fname] = [_validate_and_deserialize(v, inner, fname) for v in val]
+                            converted = [_validate_and_deserialize(v, inner, fname) for v in val]
+                            if will_have_edges:
+                                # keep mutable list so hyperedge application can insert nodes by index
+                                kwargs[fname] = converted
+                            else:
+                                kwargs[fname] = tuple(converted)
                         else:
                             # heterogeneous tuple: validate element-wise
                             if not isinstance(val, list):
@@ -571,19 +609,26 @@ class Decoder:
                                 else:
                                     sub_t = Any
                                 lst.append(_validate_and_deserialize(v, sub_t, fname))
-                            kwargs[fname] = lst
+                            if will_have_edges:
+                                kwargs[fname] = lst
+                            else:
+                                kwargs[fname] = tuple(lst)
                     else:
                         kwargs[fname] = _validate_and_deserialize(val, ftype, fname)
 
                 else:
-                    # missing metadata: assign None; for containers, use empty
+                    # missing metadata: assign None; for containers, use empty (and for tuple, possibly mutable list if edges incoming)
                     origin = get_origin(ftype)
                     if origin is list:
                         kwargs[fname] = []
                     elif origin is dict:
                         kwargs[fname] = {}
                     elif origin is tuple:
-                        kwargs[fname] = []
+                        # if hyperedges attach, create mutable list to fill; otherwise empty tuple
+                        if fname in edges_by_source.get(nid, set()):
+                            kwargs[fname] = []
+                        else:
+                            kwargs[fname] = tuple()
                     elif origin is set:
                         kwargs[fname] = set()
                     elif origin is frozenset:
@@ -701,8 +746,17 @@ class Decoder:
             if not _is_attrs_instance(obj):
                 continue
 
+            # Resolve forward-ref annotations for the object's type once to speed checks
+            try:
+                hints = get_type_hints(type(obj))
+            except Exception:
+                hints = {}
+
             for f in attrs.fields(type(obj)):
                 ann = f.type
+                # resolve forward-ref string annotations for field types
+                if isinstance(ann, str):
+                    ann = hints.get(f.name, ann)
                 origin = get_origin(ann)
 
                 if origin is tuple:
