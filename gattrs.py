@@ -617,11 +617,3 @@ def encode(obj: Any) -> Dict[str, Any]:
 def decode(data: Any, objtype: type) -> Any:
     dec = Decoder()
     return dec.decode(data, objtype)
-
-
-def json_schema(objtype: type) -> Dict[str, Any]:
-    # basic json schema generation: properties from attrs fields
-    props: Dict[str, Any] = {}
-    for f in attrs.fields(objtype):
-        props[f.name] = {"type": "object"}
-    return {"type": "object", "properties": props}
