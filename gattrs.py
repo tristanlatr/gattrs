@@ -281,6 +281,7 @@ class Encoder:
                 if isinstance(val, dict):
                     # if any value is an attrs node -> edges
                     if any(_is_attrs_instance(v) for v in val.values()):
+                        meta_dict = {}
                         for k, v in val.items():
                             if _is_attrs_instance(v):
                                 tgt = self.register_node(v)
@@ -288,15 +289,23 @@ class Encoder:
                                 self.hyperedges.append(edge)
                                 if id(v) not in self._processed:
                                     stack.append(v)
+                            else:
+                                meta_dict[k] = _serialize_meta_value(v)
+                        if meta_dict:
+                            meta[name] = meta_dict
+                        # continue processing next field
+                    else:
+                        # else serialize dict
+                        # serialize nested metadata values
+                        meta[name] = {k: _serialize_meta_value(v) for k, v in val.items()}
                         continue
-                    # else serialize dict
-                    # serialize nested metadata values
-                    meta[name] = {k: _serialize_meta_value(v) for k, v in val.items()}
-                    continue
 
                 # list/tuple
                 if isinstance(val, (list, tuple)):
                     if any(_is_attrs_instance(e) for e in val):
+                        # collect metadata for non-node elements, placeholders for node entries
+                        meta_list = []
+                        saw_non_node = False
                         for idx, e in enumerate(val):
                             if _is_attrs_instance(e):
                                 tgt = self.register_node(e)
@@ -304,13 +313,21 @@ class Encoder:
                                 self.hyperedges.append(edge)
                                 if id(e) not in self._processed:
                                     stack.append(e)
-                        continue
-                    meta[name] = [_serialize_meta_value(e) for e in val]
+                                meta_list.append(None)
+                            else:
+                                meta_list.append(_serialize_meta_value(e))
+                                saw_non_node = True
+                        if saw_non_node:
+                            meta[name] = meta_list
+                    else:
+                        meta[name] = [_serialize_meta_value(e) for e in val]
                     continue
 
                 # set/frozenset
                 if isinstance(val, (set, frozenset)):
                     if any(_is_attrs_instance(e) for e in val):
+                        # collect primitive elements for metadata; node elements become edges
+                        primitives = []
                         for e in val:
                             if _is_attrs_instance(e):
                                 tgt = self.register_node(e)
@@ -318,8 +335,12 @@ class Encoder:
                                 self.hyperedges.append(edge)
                                 if id(e) not in self._processed:
                                     stack.append(e)
-                        continue
-                    meta[name] = [_serialize_meta_value(e) for e in sorted(val, key=lambda x: str(_serialize_meta_value(x)))]
+                            else:
+                                primitives.append(_serialize_meta_value(e))
+                        if primitives:
+                            meta[name] = sorted(primitives, key=lambda x: str(x))
+                    else:
+                        meta[name] = [_serialize_meta_value(e) for e in sorted(val, key=lambda x: str(_serialize_meta_value(x)))]
                     continue
 
                 # special types
@@ -448,8 +469,19 @@ class Decoder:
                         elem_type = None
                         if origin is dict and len(args) == 2:
                             elem_type = args[1]
-                        elif origin in (list, tuple, set, frozenset) and args:
+                        elif origin in (list, set, frozenset) and args:
                             elem_type = args[0]
+                        elif origin is tuple and args:
+                            # tuple args may be heterogeneous or variable-length
+                            meta = edge.get("metadata", {})
+                            idx = meta.get("index")
+                            # variable-length tuple annotation: Tuple[T, ...]
+                            if len(args) == 2 and args[1] is Ellipsis:
+                                elem_type = args[0]
+                            elif isinstance(idx, int) and idx < len(args):
+                                elem_type = args[idx]
+                            else:
+                                elem_type = None
                         else:
                             # direct type or Union
                             if get_origin(ann) is None:
@@ -460,8 +492,32 @@ class Decoder:
                                     if a is not type(None):
                                         elem_type = a
                                         break
-                        if isinstance(elem_type, type):
-                            self.node_types[tgt] = elem_type
+                        # if elem_type is a Union (PEP 604 or typing.Union), pick a concrete attrs
+                        # type option if present
+                        from typing import Union as TypingUnion
+                        import types as _types
+                        UnionType = getattr(_types, "UnionType", None)
+                        if elem_type is not None:
+                            # typing.Union from typing
+                            if get_origin(elem_type) is TypingUnion:
+                                for opt in get_args(elem_type):
+                                    if opt is not type(None) and isinstance(opt, type):
+                                        # prefer attrs-decorated types
+                                        if hasattr(opt, "__attrs_attrs__"):
+                                            self.node_types[tgt] = opt
+                                            changed = True
+                                            break
+                            # PEP 604 union (types.UnionType)
+                            elif UnionType is not None and isinstance(elem_type, UnionType):
+                                for opt in get_args(elem_type):
+                                    if opt is not type(None) and isinstance(opt, type):
+                                        if hasattr(opt, "__attrs_attrs__"):
+                                            self.node_types[tgt] = opt
+                                            changed = True
+                                            break
+                            elif isinstance(elem_type, type):
+                                self.node_types[tgt] = elem_type
+                                changed = True
                             changed = True
 
         # instantiate nodes with metadata
@@ -494,7 +550,30 @@ class Decoder:
                 if fname in nmeta:
                     val = nmeta[fname]
                     # validate and convert
-                    kwargs[fname] = _validate_and_deserialize(val, ftype, fname)
+                    origin = get_origin(ftype)
+                    # Special-case tuple: keep as list to allow inserting node refs
+                    if origin is tuple:
+                        args = get_args(ftype)
+                        if args and len(args) == 2 and args[1] is Ellipsis:
+                            # variable-length homogeneous tuple Tuple[T, ...]
+                            inner = args[0]
+                            if not isinstance(val, list):
+                                raise ValueError(f"attribute '{fname}'. expected list to build tuple")
+                            kwargs[fname] = [_validate_and_deserialize(v, inner, fname) for v in val]
+                        else:
+                            # heterogeneous tuple: validate element-wise
+                            if not isinstance(val, list):
+                                raise ValueError(f"attribute '{fname}'. expected list to build tuple")
+                            lst = []
+                            for i, v in enumerate(val):
+                                if i < len(args):
+                                    sub_t = args[i]
+                                else:
+                                    sub_t = Any
+                                lst.append(_validate_and_deserialize(v, sub_t, fname))
+                            kwargs[fname] = lst
+                    else:
+                        kwargs[fname] = _validate_and_deserialize(val, ftype, fname)
 
                 else:
                     # missing metadata: assign None; for containers, use empty
@@ -503,6 +582,8 @@ class Decoder:
                         kwargs[fname] = []
                     elif origin is dict:
                         kwargs[fname] = {}
+                    elif origin is tuple:
+                        kwargs[fname] = []
                     elif origin is set:
                         kwargs[fname] = set()
                     elif origin is frozenset:
@@ -568,10 +649,23 @@ class Decoder:
                     lst[idx] = tgt_obj
             elif origin in (tuple,):
                 idx = meta.get("index")
-                key = (src, rel)
-                if key not in tuple_build:
-                    tuple_build[key] = {}
-                tuple_build[key][idx] = tgt_obj
+                # if we already have a list for this tuple on the object, set it directly
+                cur = getattr(src_obj, rel)
+                if cur is None:
+                    # fallback: gather in tuple_build
+                    key = (src, rel)
+                    if key not in tuple_build:
+                        tuple_build[key] = {}
+                    tuple_build[key][idx] = tgt_obj
+                else:
+                    # ensure list exists
+                    if not isinstance(cur, list):
+                        # convert tuple (from metadata) to list to mutate
+                        cur = list(cur)
+                        setattr(src_obj, rel, cur)
+                    while len(cur) <= idx:
+                        cur.append(None)
+                    cur[idx] = tgt_obj
             elif origin in (set, frozenset):
                 st = getattr(src_obj, rel)
                 if st is None:
@@ -589,20 +683,42 @@ class Decoder:
         # finalize tuples and frozensets
         for (src, rel), items in tuple_build.items():
             lst = [v for k, v in sorted(items.items())]
-            setattr(self.node_objs[src], rel, tuple(lst))
+            # if object already has a list for this rel, merge into it
+            cur = getattr(self.node_objs[src], rel)
+            if isinstance(cur, list):
+                # ensure size
+                maxidx = max(items.keys())
+                while len(cur) <= maxidx:
+                    cur.append(None)
+                for k, v in items.items():
+                    cur[k] = v
+                setattr(self.node_objs[src], rel, tuple(cur))
+            else:
+                setattr(self.node_objs[src], rel, tuple(lst))
 
-        # finalize frozensets if any - convert sets to frozenset for annotated fields
-        for nid, obj in self.node_objs.items():
+        # FINALIZE tuple and frozenset fields (ALWAYS)
+        for obj in self.node_objs.values():
             if not _is_attrs_instance(obj):
                 continue
+
             for f in attrs.fields(type(obj)):
                 ann = f.type
-                if get_origin(ann) is frozenset:
+                origin = get_origin(ann)
+
+                if origin is tuple:
+                    val = getattr(obj, f.name)
+                    if val is None:
+                        continue
+                    if isinstance(val, list):
+                        setattr(obj, f.name, tuple(val))
+
+                elif origin is frozenset:
                     val = getattr(obj, f.name)
                     if val is None:
                         setattr(obj, f.name, frozenset())
                     elif isinstance(val, set):
                         setattr(obj, f.name, frozenset(val))
+
 
         # return root
         return self.node_objs["1"]
