@@ -10,6 +10,7 @@ from fractions import Fraction
 import uuid
 import pathlib
 import array
+import time
 from collections import defaultdict, OrderedDict, deque
 from types import MappingProxyType, SimpleNamespace
 from typing import TypedDict
@@ -467,6 +468,18 @@ def test_tuples_heterogenous_types():
     b = HeterogenTuples((1, "x", 2.0, a), (a, None, 3,))
 
     encoded = gattrs.encode(b)
+    assert encoded == {'graph': {'hyperedges': [{'metadata': {'index': 3},
+                             'relation': 'tup1',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'metadata': {'index': 0},
+                             'relation': 'tup2',
+                             'source': ['1'],
+                             'target': ['2']}],
+                        'nodes': {'1': {'metadata': {'tup1': [1, 'x', 2.0, None],
+                                                    'tup2': [None, None, 3]}},
+                                '2': {'metadata': {'tup1': [], 'tup2': []}}}}}
+
     decoded = gattrs.decode(encoded, HeterogenTuples)
 
     assert isinstance(decoded, HeterogenTuples)
@@ -474,3 +487,269 @@ def test_tuples_heterogenous_types():
     assert decoded.tup1[0] == 1
     assert decoded.tup1[3] is decoded.tup2[0]
 
+
+@attrs.define
+class ChainNode:
+    next: "ChainNode | None" = None
+
+def make_chain_graph_simple(size: int) -> ChainNode:
+    """
+    Create a linear chain of ChainNode objects of length `size`.
+    This produces the worst-case decode behavior for type propagation.
+    """
+    nodes = [ChainNode() for _ in range(size)]
+    for i in range(size - 1):
+        nodes[i].next = nodes[i + 1]
+    return nodes[0]
+
+def test_graph_generation_simple():
+    # test graph generation
+    assert gattrs.encode(make_chain_graph_simple(10)) == {'graph': {'hyperedges': [{'relation': 'next',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'next',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'next',
+                             'source': ['3'],
+                             'target': ['4']},
+                            {'relation': 'next',
+                             'source': ['4'],
+                             'target': ['5']},
+                            {'relation': 'next',
+                             'source': ['5'],
+                             'target': ['6']},
+                            {'relation': 'next',
+                             'source': ['6'],
+                             'target': ['7']},
+                            {'relation': 'next',
+                             'source': ['7'],
+                             'target': ['8']},
+                            {'relation': 'next',
+                             'source': ['8'],
+                             'target': ['9']},
+                            {'relation': 'next',
+                             'source': ['9'],
+                             'target': ['10']}],
+             'nodes': {'1': {'metadata': {}},
+                       '10': {'metadata': {}},
+                       '2': {'metadata': {}},
+                       '3': {'metadata': {}},
+                       '4': {'metadata': {}},
+                       '5': {'metadata': {}},
+                       '6': {'metadata': {}},
+                       '7': {'metadata': {}},
+                       '8': {'metadata': {}},
+                       '9': {'metadata': {}}}}}
+
+def timed_decode(encoded, root_type):
+    start = time.perf_counter()
+    gattrs.decode(encoded, root_type)
+    return time.perf_counter() - start
+
+# -------------------------
+# Worst-case decode test
+# -------------------------
+
+def test_decode_worst_case_type_propagation_is_approximately_linear():
+    """
+    This test constructs a worst-case chain graph for decode() where
+    type propagation advances one node per iteration.
+
+    We assert decode time grows approximately linearly with graph size.
+    """
+
+    sizes = [10, 20, 40, 80, 160, 320, 640, 1000, 1500, 2000, 10000]
+    timings = []
+
+    for size in sizes:
+        root = make_chain_graph_simple(size)
+        encoded = gattrs.encode(root)
+
+        t = timed_decode(encoded, ChainNode)
+        timings.append(t)
+
+    # Print timings for debugging / inspection
+    for size, t in zip(sizes, timings):
+        print(f"size={size:<5} decode_time={t:.6f}s")
+
+    # -------------------------
+    # Linear growth assertion
+    # -------------------------
+    #
+    # We compare ratios of time increases to size increases.
+    # For approximately linear behavior, time/size should be bounded.
+    #
+
+    time_per_node = [t / s for t, s in zip(timings, sizes)]
+
+    # Allow generous slack for CI variance
+    max_ratio = max(time_per_node)
+    min_ratio = min(time_per_node)
+
+    # Assert growth is not super-linear (quadratic would explode here)
+    assert max_ratio < min_ratio * 2, (
+        "Decode time appears super-linear; "
+        "type propagation may be degrading worse than expected."
+    )
+
+def make_chain_graph_deep(size: int, num_fields: int):
+    """
+    Create a worst-case chain graph with:
+      - `size` nodes
+      - `num_fields` attrs fields per node
+    Each field points to the *next* node in the chain.
+
+    This stresses:
+      - decode field iteration (F)
+      - hyperedge processing (E ≈ N * F)
+      - type propagation convergence
+    """
+
+    # -------------------------
+    # Dynamically generate attrs class
+    # -------------------------
+
+    field_defs = {
+        f"child_{i}": attrs.field(default=None)
+        for i in range(num_fields)
+    }
+
+    ChainNode = attrs.make_class(
+        "ChainNode",
+        field_defs,
+        slots=False,
+    )
+
+    # -------------------------
+    # Build chain instances
+    # -------------------------
+
+    nodes = [ChainNode() for _ in range(size)]
+
+    for i in range(size - 1):
+        for j in range(num_fields):
+            setattr(nodes[i], f"child_{j}", nodes[i + 1])
+
+    return nodes[0], ChainNode
+
+def test_graph_generation_deep():
+    assert gattrs.encode(make_chain_graph_deep(3, 2)[0]) == {
+        'graph': {'hyperedges': [{'relation': 'child_0',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_1',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_0',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'child_1',
+                             'source': ['2'],
+                             'target': ['3']}],
+             'nodes': {'1': {'metadata': {}},
+                       '2': {'metadata': {}},
+                       '3': {'metadata': {}}}}}
+    
+
+    assert gattrs.encode(make_chain_graph_deep(5, 5)[0]) == {'graph': {'hyperedges': [{'relation': 'child_0',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_1',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_2',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_3',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_4',
+                             'source': ['1'],
+                             'target': ['2']},
+                            {'relation': 'child_0',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'child_1',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'child_2',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'child_3',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'child_4',
+                             'source': ['2'],
+                             'target': ['3']},
+                            {'relation': 'child_0',
+                             'source': ['3'],
+                             'target': ['4']},
+                            {'relation': 'child_1',
+                             'source': ['3'],
+                             'target': ['4']},
+                            {'relation': 'child_2',
+                             'source': ['3'],
+                             'target': ['4']},
+                            {'relation': 'child_3',
+                             'source': ['3'],
+                             'target': ['4']},
+                            {'relation': 'child_4',
+                             'source': ['3'],
+                             'target': ['4']},
+                            {'relation': 'child_0',
+                             'source': ['4'],
+                             'target': ['5']},
+                            {'relation': 'child_1',
+                             'source': ['4'],
+                             'target': ['5']},
+                            {'relation': 'child_2',
+                             'source': ['4'],
+                             'target': ['5']},
+                            {'relation': 'child_3',
+                             'source': ['4'],
+                             'target': ['5']},
+                            {'relation': 'child_4',
+                             'source': ['4'],
+                             'target': ['5']}],
+             'nodes': {'1': {'metadata': {}},
+                       '2': {'metadata': {}},
+                       '3': {'metadata': {}},
+                       '4': {'metadata': {}},
+                       '5': {'metadata': {}}}}}
+    
+    obj, objtype = make_chain_graph_deep(11, 9)
+    assert obj
+    assert gattrs.encode(obj) == {}
+
+def test_encode_decode_worst_case_many_fields():
+    import time
+    import gattrs
+
+    sizes = [10, 25, 50, 100, 200]
+    num_fields = 20
+
+    ecode_times = []
+    decode_times = []
+
+    for n in sizes:
+        root, NodeType = make_chain_graph_deep(n, num_fields)
+        start = time.perf_counter()
+        encoded = gattrs.encode(root)
+        ecode_times.append(time.perf_counter() - start)
+
+        start = time.perf_counter()
+        gattrs.decode(encoded, NodeType)
+        decode_times.append(time.perf_counter() - start)
+
+    for n, t in zip(sizes, ecode_times):
+        print(f"N={n:<4} F={num_fields:<3} decode={t:.6f}s")
+    ratios = [ecode_times[i+1] / ecode_times[i] for i in range(len(ecode_times) - 1)]
+    # Allow noise, but fail on quadratic explosion
+    assert max(ratios) < 6, 'decode time appears super-linear; type propagation may be degrading worse than expected.'
+
+    for n, t in zip(sizes, decode_times):
+        print(f"N={n:<4} F={num_fields:<3} decode={t:.6f}s")
+    ratios = [decode_times[i+1] / decode_times[i] for i in range(len(decode_times) - 1)]
+    # Allow noise, but fail on quadratic explosion
+    assert max(ratios) < 6, 'decode time appears super-linear; type propagation may be degrading worse than expected.'
