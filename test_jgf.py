@@ -297,8 +297,8 @@ class TestGraph(unittest.TestCase):
         # V2 Change: Nodes are stored in a Dictionary {id: Node}
         
         self.assertEqual(len(graph.nodes), 1)
-        self.assertEqual(graph.nodes[0].id, node_id)
-        self.assertEqual(graph.nodes[0].label, node_label)
+        self.assertEqual(graph.nodes[node_id].id, node_id)
+        self.assertEqual(graph.nodes[node_id].label, node_label)
 
     def test_add_node_with_metadata(self):
         """should add a node to a graph, with meta data"""
@@ -314,8 +314,8 @@ class TestGraph(unittest.TestCase):
         graph.add_node(JgfNode(node_id, node_label, metadata))
 
         self.assertEqual(len(graph.nodes), 1)
-        self.assertEqual(graph.nodes[0].metadata['position'], 'Power Forward')
-        self.assertEqual(graph.nodes[0].metadata['shirt'], 35)
+        self.assertEqual(graph.nodes[node_id].metadata['position'], 'Power Forward')
+        self.assertEqual(graph.nodes[node_id].metadata['shirt'], 35)
 
     def test_add_node_throws_on_duplicate(self):
         """should throw error when adding a node that already exists"""
@@ -348,16 +348,16 @@ class TestGraph(unittest.TestCase):
         """should add multiple nodes at once"""
         graph = JgfGraph()
         more_nodes = [
-            JgfNode('kevin-durant#4497', 'Kevin Durant'),
-            JgfNode('kyrie-irving#9876', 'Kyrie Irving'),
+            JgfNode(id1:='kevin-durant#4497', 'Kevin Durant'),
+            JgfNode(id2:='kyrie-irving#9876', 'Kyrie Irving'),
         ]
 
         graph.add_nodes(more_nodes)
 
-        self.assertEqual(graph.nodes[0].id, 'kevin-durant#4497')
-        self.assertEqual(graph.nodes[0].label, 'Kevin Durant')
-        self.assertEqual(graph.nodes[1].id, 'kyrie-irving#9876')
-        self.assertEqual(graph.nodes[1].label, 'Kyrie Irving')
+        self.assertEqual(graph.nodes[id1].id, 'kevin-durant#4497')
+        self.assertEqual(graph.nodes[id1].label, 'Kevin Durant')
+        self.assertEqual(graph.nodes[id2].id, 'kyrie-irving#9876')
+        self.assertEqual(graph.nodes[id2].label, 'Kyrie Irving')
 
     # describe('#removeNode')
     def test_remove_node(self):
@@ -642,6 +642,7 @@ class TestMultiGraph(unittest.TestCase):
         self.assertEqual(multi_graph.metadata, metadata)
 
 class TestJsonDecorator(unittest.TestCase):
+    maxDiff = None
 
     # describe('#to json')
     def test_to_json_throws_error_for_non_supported_objects(self):
@@ -649,25 +650,25 @@ class TestJsonDecorator(unittest.TestCase):
         # Note: We must instantiate valid objects (pass required args) 
         # to ensure the error comes from the decorator check, not the constructor.
         
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json(JgfNode('id', 'label'))
             
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json(JgfEdge('s', 't'))
             
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json(Jgf())
             
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json(object())
             
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json(None)
             
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json(2)
             
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             Jgf.to_json('hello')
 
         Jgf.to_json(JgfGraph(), validate=True)
@@ -684,17 +685,16 @@ class TestJsonDecorator(unittest.TestCase):
 
         graph.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge'))
 
-        # V2 Change: 'nodes' is a Dictionary (Map), not a List.
         expected_json = {
             'graph': {
                 'type': 'someType',
                 'label': 'someLabel',
                 'directed': True,
                 'metadata': {'bla': 'some-meta-data'},
-                'nodes': [
-                    {'id': 'firstNodeId', 'label': 'blubb-label', 'metadata': {'bla': 'whoopp'}},
-                    {'id': 'secondNodeId', 'label': 'bla-label', 'metadata': {'bli': 'whaaat'}},
-                ],
+                'nodes': {
+                    'firstNodeId': {'label': 'blubb-label', 'metadata': {'bla': 'whoopp'}},
+                    'secondNodeId': {'label': 'bla-label', 'metadata': {'bli': 'whaaat'}},
+                },
                 'edges': [
                     {
                         'source': 'firstNodeId',
@@ -768,10 +768,10 @@ class TestJsonDecorator(unittest.TestCase):
                     'label': "someLabel",
                     'directed': True,
                     'metadata': {'bla': "some-meta-data"},
-                    'nodes': [
-                        {'id': "firstNodeId", 'label': "blubb-label", 'metadata': {'bla': "whoopp"}},
-                        {'id': "secondNodeId", 'label': "bla-label", 'metadata': {'bli': "whaaat"}},
-                    ],
+                    'nodes': {
+                        "firstNodeId": {'label': "blubb-label", 'metadata': {'bla': "whoopp"}},
+                        "secondNodeId": {'label': "bla-label", 'metadata': {'bli': "whaaat"}},
+                    },
                     'edges': [{
                         'source': "firstNodeId",
                         'target': "secondNodeId",
@@ -783,10 +783,10 @@ class TestJsonDecorator(unittest.TestCase):
                     'label': "otherLabel",
                     'directed': False,
                     'metadata': {'ble': "some-blumeta-data"},
-                    'nodes': [
-                        {'id': "other-firstNodeId", 'label': "effe-label", 'metadata': {'ufe': "schnad"}},
-                        {'id': "other-secondNodeId", 'label': "uffe-label", 'metadata': {'bame': "bral"}},
-                    ],
+                    'nodes': {
+                        "other-firstNodeId": {'label': "effe-label", 'metadata': {'ufe': "schnad"}},
+                        "other-secondNodeId": {'label': "uffe-label", 'metadata': {'bame': "bral"}},
+                    },
                     'edges': [{
                         'source': "other-firstNodeId",
                         'target': "other-secondNodeId",
@@ -807,10 +807,10 @@ class TestJsonDecorator(unittest.TestCase):
                 'label': 'someLabel',
                 'directed': True,
                 'metadata': {'bla': 'some-meta-data'},
-                'nodes': [
-                    {'id': 'firstNodeId', 'label': 'blubb-label', 'metadata': {'bla': 'whoopp'}},
-                    {'id': 'secondNodeId', 'label': 'bla-label', 'metadata': {'bli': 'whaaat'}},
-                ],
+                'nodes': {
+                    (id1:='firstNodeId'): {'label': 'blubb-label', 'metadata': {'bla': 'whoopp'}},
+                    (id2:='secondNodeId'): {'label': 'bla-label', 'metadata': {'bli': 'whaaat'}},
+                },
                 'edges': [
                     {
                         'source': 'firstNodeId',
@@ -834,15 +834,15 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(len(graph.edges), 1)
 
         # Check Nodes
-        self.assertIsInstance(graph.nodes[0], JgfNode)
-        self.assertEqual(graph.nodes[0].id, 'firstNodeId')
-        self.assertEqual(graph.nodes[0].label, 'blubb-label')
-        self.assertEqual(graph.nodes[0].metadata, {'bla': 'whoopp'})
+        self.assertIsInstance(graph.nodes[id1], JgfNode)
+        self.assertEqual(graph.nodes[id1].id, 'firstNodeId')
+        self.assertEqual(graph.nodes[id1].label, 'blubb-label')
+        self.assertEqual(graph.nodes[id1].metadata, {'bla': 'whoopp'})
 
-        self.assertIsInstance(graph.nodes[1], JgfNode)
-        self.assertEqual(graph.nodes[1].id, 'secondNodeId')
-        self.assertEqual(graph.nodes[1].label, 'bla-label')
-        self.assertEqual(graph.nodes[1].metadata, {'bli': 'whaaat'})
+        self.assertIsInstance(graph.nodes[id2], JgfNode)
+        self.assertEqual(graph.nodes[id2].id, 'secondNodeId')
+        self.assertEqual(graph.nodes[id2].label, 'bla-label')
+        self.assertEqual(graph.nodes[id2].metadata, {'bli': 'whaaat'})
 
         # Check Edges
         self.assertIsInstance(graph.edges[0], JgfEdge)
@@ -862,10 +862,11 @@ class TestJsonDecorator(unittest.TestCase):
                     'label': "someLabel",
                     'directed': True,
                     'metadata': {'bla': "some-meta-data"},
-                    'nodes': [
-                        {'id': "firstNodeId", 'label': "blubb-label", 'metadata': {'bla': "whoopp"}},
-                        {'id': "secondNodeId", 'label': "bla-label", 'metadata': {'bli': "whaaat"}},
-                    ],
+                    'nodes': 
+                        {
+                            (id1:="firstNodeId"): {'label': "blubb-label", 'metadata': {'bla': "whoopp"}},
+                            (id2:="secondNodeId"): {'label': "bla-label", 'metadata': {'bli': "whaaat"}},
+                        },
                     'edges': [{
                         'source': "firstNodeId",
                         'target': "secondNodeId",
@@ -877,10 +878,10 @@ class TestJsonDecorator(unittest.TestCase):
                     'label': "otherLabel",
                     'directed': False,
                     'metadata': {'ble': "some-blumeta-data"},
-                    'nodes': [
-                        {'id': "other-firstNodeId", 'label': "effe-label", 'metadata': {'ufe': "schnad"}},
-                        {'id': "other-secondNodeId", 'label': "uffe-label", 'metadata': {'bame': "bral"}},
-                    ],
+                    'nodes': {
+                        (g2id1:="other-firstNodeId"): {'label': "effe-label", 'metadata': {'ufe': "schnad"}},
+                        (g2id2:="other-secondNodeId"): {'label': "uffe-label", 'metadata': {'bame': "bral"}},
+                    },
                     'edges': [{
                         'source': "other-firstNodeId",
                         'target': "other-secondNodeId",
@@ -908,10 +909,10 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(len(graph1.nodes), 2)
         self.assertEqual(len(graph1.edges), 1)
 
-        self.assertIsInstance(graph1.nodes[0], JgfNode)
-        self.assertEqual(graph1.nodes[0].id, 'firstNodeId')
-        self.assertEqual(graph1.nodes[0].label, 'blubb-label')
-        self.assertEqual(graph1.nodes[0].metadata, {'bla': 'whoopp'})
+        self.assertIsInstance(graph1.nodes[id1], JgfNode)
+        self.assertEqual(graph1.nodes[id1].id, 'firstNodeId')
+        self.assertEqual(graph1.nodes[id1].label, 'blubb-label')
+        self.assertEqual(graph1.nodes[id1].metadata, {'bla': 'whoopp'})
 
         self.assertIsInstance(graph1.edges[0], JgfEdge)
         self.assertEqual(graph1.edges[0].source, 'firstNodeId')
@@ -928,10 +929,10 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(len(graph2.nodes), 2)
         self.assertEqual(len(graph2.edges), 1)
 
-        self.assertIsInstance(graph2.nodes[0], JgfNode)
-        self.assertEqual(graph2.nodes[0].id, 'other-firstNodeId')
-        self.assertEqual(graph2.nodes[0].label, 'effe-label')
-        self.assertEqual(graph2.nodes[0].metadata, {'ufe': "schnad"})
+        self.assertIsInstance(graph2.nodes[g2id1], JgfNode)
+        self.assertEqual(graph2.nodes[g2id1].id, 'other-firstNodeId')
+        self.assertEqual(graph2.nodes[g2id1].label, 'effe-label')
+        self.assertEqual(graph2.nodes[g2id1].metadata, {'ufe': "schnad"})
 
         self.assertIsInstance(graph2.edges[0], JgfEdge)
         self.assertEqual(graph2.edges[0].source, 'other-firstNodeId')

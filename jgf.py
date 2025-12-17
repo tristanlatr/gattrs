@@ -1,105 +1,82 @@
 """
-A SUBSET OF JSON Graph Format (JGF) V1 https://jsongraphformat.info/
+A SUBSET OF JSON Graph Format (JGF) V2 https://jsongraphformat.info/
 
 The schema is simplified and adapted for serializing Python objects
 """
 
 
-_SCHEMA =    {
-        "$schema": "http://json-schema.org/draft-04/schema",
-        "oneOf": [
-            {
-            "type": "object",
-            "properties": {
-                "graph": {
-                "$ref": "#/definitions/graph"
-                }
-            },
-            "additionalProperties": False,
-            "required": ["graph"]
-            },
-            {
-            "type": "object",
-            "properties": {
-                "label": {
-                "type": "string"
-                },
-                "type": {
-                "type": "string"
-                },
-                "metadata": {
-                "type": ["object", "null"]
-                },
-                "graphs": {
-                "type": "array",
-                "items": {
-                    "$ref": "#/definitions/graph"
-                }
-                }
-            },
-            "additionalProperties": False
-            }
-        ],
-        "definitions": {
-            "graph": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "label": {
-                "type": "string"
-                },
-                "directed": {
-                "type": ["boolean", "null"],
-                "default": True
-                },
-                "type": {
-                "type": "string"
-                },
-                "metadata": {
-                "type": ["object", "null"]
-                },
-                "nodes": {
-                "type": ["array", "null"],
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                    "id": {
-                        "type": "string"
-                    },
-                    "label": {
-                        "type": "string"
-                    },
-                    "metadata": {
-                        "type": ["object", "null"]
-                    }
-                    },
-                    "required": ["id"]
-                }
-                },
-                "edges": {
-                "type": ["array", "null"],
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                    "source": {
-                        "type": "string"
-                    },
-                    "target": {
-                        "type": "string"
-                    },
-                    "relation": {
-                        "type": "string"
-                    }
-                    },
-                    "required": ["source", "target", "relation"]
-                }
-                }
-            }
-            }
-        }
+_SCHEMA = {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "http://jsongraphformat.info/v2.1/json-graph-schema.json",
+  "title": "JSON Graph Schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "graph": { "$ref": "#/definitions/graph" }
+      },
+      "additionalProperties": False,
+      "required": [
+        "graph"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "graphs": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/graph" }
+        },
+        "label": { "type": "string" },
+        "type": { "type": "string" },
+        "metadata": { "type": [ "object" ] },
+      },
+      "additionalProperties": False
     }
+  ],
+  "definitions": {
+    "graph": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": False,
+          "properties": {
+            "label": { "type": "string" },
+            "directed": { "type": [ "boolean" ], "default": True },
+            "type": { "type": "string" },
+            "metadata": { "type": [ "object" ] },
+            "nodes": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/definitions/node" }
+            },
+            "edges": {
+              "type": [ "array" ],
+              "items": { "$ref": "#/definitions/edge" }
+            }
+          }
+        }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": False,
+      "properties": {
+        "label": { "type": "string" },
+        "metadata": { "type": "object" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": False,
+      "properties": {
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "relation": { "type": "string" },
+      },
+      "required": [ "source", "target", "relation" ]
+    },
+  }
+}
 
 
 from typing import List, Optional, Dict, Any
@@ -240,13 +217,12 @@ class JgfGraph:
         :param directed: Pass True for a directed graph, False for an undirected graph.
         :param metadata: Custom graph metadata.
         """
-        self._nodes: List[JgfNode] = []
+        self._nodes: Dict[str, JgfNode] = {}
         self._edges: List[JgfEdge] = []
 
         self.type = type
         self.label = label
         self.directed = directed
-        # Assigning to self.metadata triggers the validation setter defined below
         self.metadata = metadata
 
     # Metadata Property
@@ -260,8 +236,10 @@ class JgfGraph:
         self._metadata = value
 
     @property
-    def nodes(self) -> List[JgfNode]:
-        """Returns all nodes."""
+    def nodes(self) -> Dict[str, JgfNode]:
+        """
+        Returns all nodes as a list for compatibility/iteration.
+        """
         return self._nodes
 
     @property
@@ -285,13 +263,12 @@ class JgfGraph:
         :param node_id: Node to be found.
         :raises ValueError: If node does not exist.
         """
-        # Python equivalent of _.find using a generator
-        found_node = next((n for n in self._nodes if n.id == node_id), None)
+        node = self._nodes.get(node_id)
         
-        if not found_node:
+        if not node:
             raise ValueError(f"A node does not exist with id = {node_id}")
 
-        return found_node
+        return node
 
     def _node_exists(self, node: JgfNode) -> bool:
         """
@@ -302,9 +279,9 @@ class JgfGraph:
     def _node_exists_by_id(self, node_id: str) -> bool:
         """
         Checks if a node ID exists in the graph.
+        V2 Optimization: O(1) lookup.
         """
-        found_node = next((n for n in self._nodes if n.id == node_id), None)
-        return found_node is not None
+        return node_id in self._nodes
 
     def add_node(self, node: JgfNode) -> None:
         """
@@ -315,7 +292,7 @@ class JgfGraph:
         if self._node_exists(node):
             raise ValueError(f"A node already exists with id = {node.id}")
 
-        self._nodes.append(node)
+        self._nodes[node.id] = node
 
     def add_nodes(self, nodes: List[JgfNode]) -> None:
         """
@@ -328,19 +305,15 @@ class JgfGraph:
     def remove_node(self, node: JgfNode | str) -> None:
         """
         Removes an existing node from the graph.
-        :param node: Node to be removed.
+        :param node: Node object or Node ID string to be removed.
         :raises ValueError: If the node does not exist.
         """
-        if isinstance(node, str):
-            if not self._node_exists_by_id(node):
-                raise ValueError(f"A node does not exist with id = {node}")
-        else:
-            if not self._node_exists(node):
-                raise ValueError(f"A node does not exist with id = {node.id}")
-            node = node.id
+        node_id = node.id if hasattr(node, 'id') else node
 
-        # Python equivalent of _.remove: rebuild list excluding the match
-        self._nodes = [n for n in self._nodes if n.id != node]
+        if not self._node_exists_by_id(node_id):
+            raise ValueError(f"A node does not exist with id = {node_id}")
+
+        del self._nodes[node_id]
 
     def get_node_by_id(self, node_id: str) -> JgfNode:
         """
@@ -380,6 +353,8 @@ class JgfGraph:
         Removes existing edge from the graph.
         :param edge: Edge to be removed.
         """
+        # Note: Ideally edges would be stored in a set or map for performance, 
+        # but for V2 compatibility we kept it as a list for now as IDs on edges are optional.
         self._edges = [e for e in self._edges if e != edge]
 
     def get_edges_by_nodes(self, source: str, target: str, relation: Optional[str] = None) -> List[JgfEdge]:
@@ -392,7 +367,7 @@ class JgfGraph:
         self._guard_against_non_existent_nodes(source, target)
         if relation is not None:
             temp_edge = JgfEdge(source, target, relation)
-            return [e for e in self._edges if e==temp_edge]
+            return [e for e in self._edges if e == temp_edge]
         return [
             e for e in self._edges if e.source == source and e.target == target
         ]
@@ -466,19 +441,16 @@ class JgfMultiGraph:
 class Jgf:
     """
     Transforms graphs or multi graphs to json (dict) or vice versa.
-
-    Note that this is just called decorator for semantic reasons and does not follow 
-    and does not intend to follow the GoF decorator design pattern.
     """
 
     @staticmethod
     def from_json(json_data: Dict[str, Any], validate:bool=False) -> JgfGraph | JgfMultiGraph:
         """
         Creates a Jgf graph or multi graph from JSON (dict).
-        :param json_data: JSON to be transformed. This has to be according to the JGF.
+        :param json_data: JSON to be transformed.
+        :param validate: If True, validates against the schema. 
         :raises ValueError: If json can not be transformed to a graph or multi graph.
-        :returns: The created Jgf graph or multi graph object.
-        """
+        :returns: The created Jgf graph or multi graph object.        """
         if not isinstance(json_data, dict):
             raise TypeError('json_data has to be a dict.')
         if validate:
@@ -488,7 +460,6 @@ class Jgf:
             return Jgf._graph_from_json(json_data['graph'])
 
         if 'graphs' in json_data and json_data['graphs'] is not None:
-            # MultiGraph constructor might expect type/label/metadata, defaulting to None/empty if missing
             mg_type = json_data.get('type', '')
             mg_label = json_data.get('label', '')
             mg_metadata = json_data.get('metadata', None)
@@ -507,38 +478,35 @@ class Jgf:
         """
         Creates a single JGF graph from JSON.
         """
-        # Extract fields with safe defaults
-        g_type = graph_json.get('type', '')
-        g_label = graph_json.get('label', '')
-        # Default to True as per JgfGraph constructor default
-        g_directed = graph_json.get('directed', True) 
-        g_metadata = graph_json.get('metadata', None)
+        graph = JgfGraph(
+            type=graph_json.get('type', ''),
+            label=graph_json.get('label', ''),
+            directed=graph_json.get('directed', True),
+            metadata=graph_json.get('metadata', None),
+        )
 
-        graph = JgfGraph(g_type, g_label, g_directed, g_metadata)
+        # --- 1. Parse Nodes (V2: Dict mapping ID -> Properties) ---
+        raw_nodes = graph_json.get('nodes', {})
+        if isinstance(raw_nodes, dict):
+            for nid, n_data in raw_nodes.items():
+                node = JgfNode(
+                    id=nid,
+                    label=n_data.get('label'),
+                    metadata=n_data.get('metadata')
+                )
+                graph.add_node(node)
 
-        nodes = graph_json.get('nodes', [])
-        for node in nodes:
-            # JgfNode constructor: id, label, metadata
-            n_id = node.get('id')
-            n_label = node.get('label')
-            n_meta = node.get('metadata', None)
-            graph.add_node(JgfNode(n_id, n_label, n_meta))
-
-        edges = graph_json.get('edges', [])
-        for edge in edges:
-            # JgfEdge constructor: source, target, relation
-            e_source = edge.get('source')
-            e_target = edge.get('target')
-            e_rel = edge.get('relation', None)
-            
-            graph.add_edge(JgfEdge(e_source, e_target, e_rel))
+        # --- 2. Parse Standard Edges ---
+        for e_data in graph_json.get('edges', []):
+            edge = JgfEdge(
+                source=e_data['source'],
+                target=e_data['target'],
+                relation=e_data.get('relation'),
+            )
+            graph.add_edge(edge)
 
         return graph
 
-    @staticmethod
-    def _guard_against_invalid_graph_object(graph: Any) -> None:
-        if not isinstance(graph, JgfGraph) and not isinstance(graph, JgfMultiGraph):
-            raise ValueError('JgfJsonDecorator can only decorate graphs or multi graphs.')
 
     @staticmethod
     def to_json(graph: JgfGraph | JgfMultiGraph, validate:bool=False) -> Dict[str, Any]:
@@ -548,7 +516,8 @@ class Jgf:
         :raises ValueError: If the passed graph or multi graph can not be transformed to JSON.
         :returns: A JSON representation of the passed graph or multi graph as according to the JGF.
         """
-        Jgf._guard_against_invalid_graph_object(graph)
+        if not isinstance(graph, JgfGraph) and not isinstance(graph, JgfMultiGraph):
+            raise TypeError('expected graph to be either JgfGraph or JgfMultiGraph, got ' + str(type(graph)))
 
         is_single_graph = isinstance(graph, JgfGraph)
 
@@ -561,7 +530,13 @@ class Jgf:
         if is_single_graph:
             # If it was a single graph, we unwrap the list and return { "graph": ... }
             # Accessing index 0 is safe because _transform_graphs_to_json pushed exactly one graph
-            return Jgf._remove_null_values({'graph': all_graphs_json['graphs'][0]})
+            dat = Jgf._remove_null_values({'graph': all_graphs_json['graphs'][0]})
+
+            if validate:
+                from jsonschema import validate as jsonschema_validate
+                jsonschema_validate(instance=dat, schema=_SCHEMA)
+            
+            return dat
 
         # If MultiGraph
         all_graphs_json['type'] = graph.type
@@ -586,7 +561,7 @@ class Jgf:
                 'label': single_graph.label,
                 'directed': single_graph.directed,
                 'metadata': single_graph.metadata,
-                'nodes': [],
+                'nodes': {},  # V2: Initialized as Dict
                 'edges': [],
             }
 
@@ -597,10 +572,6 @@ class Jgf:
 
     @staticmethod
     def _remove_null_values(data: Any) -> Any:
-        """
-        Recursively removes dictionary keys where the value is None.
-        Equivalent to lodash's deep filter for null values.
-        """
         if isinstance(data, dict):
             return {
                 k: Jgf._remove_null_values(v) 
@@ -614,6 +585,10 @@ class Jgf:
 
     @staticmethod
     def _edges_to_json(graph: JgfGraph, json_obj: Dict[str, Any]) -> None:
+        # if not graph.edges:
+        #     del json_obj['edges']
+        #     return
+
         for edge in graph.edges:
             json_obj['edges'].append({
                 'source': edge.source,
@@ -623,12 +598,13 @@ class Jgf:
 
     @staticmethod
     def _nodes_to_json(graph: JgfGraph, json_obj: Dict[str, Any]) -> None:
-        for node in graph.nodes:
-            json_obj['nodes'].append({
-                'id': node.id,
-                'label': node.label,
-                'metadata': node.metadata,
-            })
+        for nid, node in graph.nodes.items():
+            node_payload = {}
+            if node.label:
+                node_payload['label'] = node.label
+            if node.metadata:
+                node_payload['metadata'] = node.metadata
+            json_obj['nodes'][nid] = node_payload
 
     @staticmethod
     def _normalize_to_multi_graph(graph: JgfGraph | JgfMultiGraph) -> JgfMultiGraph:
