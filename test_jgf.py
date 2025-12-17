@@ -1,5 +1,5 @@
 import unittest
-from jgf import JgfEdge, JgfNode, _Guard, JgfGraph, JgfMultiGraph, Jgf # , JgfDirectedHyperEdge, JgfUndirectedHyperEdge,
+from jgf import JgfEdge, JgfNode, _Guard, JgfGraph, Jgf # , JgfDirectedHyperEdge, JgfUndirectedHyperEdge,
 
 import unittest
 
@@ -603,44 +603,6 @@ class TestGraph(unittest.TestCase):
         self.assertEqual(dims['nodes'], 2)
         self.assertEqual(dims['edges'], 1)
 
-class TestMultiGraph(unittest.TestCase):
-
-    # describe('#createMultiGraph')
-    def test_create_empty_multi_graph(self):
-        """should create empty multi graph"""
-        # Python requires type and label args. 
-        # Passing empty strings to simulate default creation.
-        multi_graph = JgfMultiGraph(type='', label='')
-        
-        self.assertIsNotNone(multi_graph)
-
-        # In Python, we verify the list is empty rather than checking for Null/None
-        # because the constructor initializes self._graphs = []
-        self.assertEqual(multi_graph.graphs, [])
-
-    # describe('#addGraph')
-    def test_add_graph(self):
-        """should add a graph to the container"""
-        multi_graph = JgfMultiGraph(type='', label='')
-
-        # JgfGraph() is valid because its constructor has default arguments
-        multi_graph.add_graph(JgfGraph())
-        self.assertEqual(len(multi_graph.graphs), 1)
-
-        multi_graph.add_graph(JgfGraph())
-        self.assertEqual(len(multi_graph.graphs), 2)
-
-    # describe('#mutators')
-    def test_mutators_metadata(self):
-        """should set and get metadata"""
-        multi_graph = JgfMultiGraph(type='', label='')
-        metadata = {'wegot': 'crass'}
-
-        self.assertIsNone(multi_graph.metadata)
-
-        multi_graph.metadata = metadata
-        self.assertEqual(multi_graph.metadata, metadata)
-
 class TestJsonDecorator(unittest.TestCase):
     maxDiff = None
 
@@ -672,9 +634,7 @@ class TestJsonDecorator(unittest.TestCase):
             Jgf.to_json('hello')
 
         Jgf.to_json(JgfGraph(), validate=True)
-        # For MultiGraph, we need to pass mandatory constructor args if strict typing is enforced,
-        # but empty strings are fine.
-        Jgf.to_json(JgfMultiGraph(type='', label=''), validate=True)
+
 
     def test_transform_single_graph_to_json(self):
         """should transform single graph to json"""
@@ -706,97 +666,6 @@ class TestJsonDecorator(unittest.TestCase):
         }
 
         self.assertEqual(Jgf.to_json(graph, validate=True), expected_json)
-
-    # def test_transform_hypergraph_to_json(self):
-    #     """should transform graph with hyperedges to json (V2 Specific)"""
-    #     graph = JgfGraph('hyper', 'graph')
-    #     graph.add_node(JgfNode('n1'))
-    #     graph.add_node(JgfNode('n2'))
-    #     graph.add_node(JgfNode('n3'))
-
-    #     # Directed Hyperedge (n1 -> n2, n3)
-    #     dhe = JgfDirectedHyperEdge(source=['n1'], target=['n2', 'n3'], relation='broadcast')
-    #     graph.add_hyperedge(dhe)
-
-    #     # Undirected Hyperedge (n1, n2, n3 connected together)
-    #     uhe = JgfUndirectedHyperEdge(nodes=['n1', 'n2', 'n3'], relation='team')
-    #     graph.add_hyperedge(uhe)
-
-    #     json_out = JgfJsonDecorator.to_json(graph, validate=True)
-        
-    #     self.assertTrue('hyperedges' in json_out['graph'])
-    #     self.assertEqual(len(json_out['graph']['hyperedges']), 2)
-        
-    #     # Verify structure of first hyperedge (Directed)
-    #     he1 = json_out['graph']['hyperedges'][0]
-    #     self.assertEqual(he1['relation'], 'broadcast')
-    #     self.assertEqual(he1['source'], ['n1'])
-    #     self.assertEqual(he1['target'], ['n2', 'n3'])
-
-    #     # Verify structure of second hyperedge (Undirected)
-    #     he2 = json_out['graph']['hyperedges'][1]
-    #     self.assertEqual(he2['relation'], 'team')
-    #     self.assertEqual(he2['nodes'], ['n1', 'n2', 'n3'])
-
-    def test_transform_multigraph_to_json(self):
-        """should transform multigraph to json"""
-        multigraph = JgfMultiGraph('weird-multigraph', 'This is weird', {'weirdness': 100})
-
-        # Graph 1
-        graph1 = JgfGraph('someType', 'someLabel', True, {'bla': 'some-meta-data'})
-        graph1.add_node(JgfNode('firstNodeId', 'blubb-label', {'bla': 'whoopp'}))
-        graph1.add_node(JgfNode('secondNodeId', 'bla-label', {'bli': 'whaaat'}))
-        graph1.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge'))
-        
-        multigraph.add_graph(graph1)
-
-        # Graph 2
-        graph2 = JgfGraph('otherType', 'otherLabel', False, {'ble': 'some-blumeta-data'})
-        graph2.add_node(JgfNode('other-firstNodeId', 'effe-label', {'ufe': 'schnad'}))
-        graph2.add_node(JgfNode('other-secondNodeId', 'uffe-label', {'bame': 'bral'}))
-        graph2.add_edge(JgfEdge('other-firstNodeId', 'other-secondNodeId', 'is-ither-test-edge',))
-        
-        multigraph.add_graph(graph2)
-
-        expected_json = {
-            'type': 'weird-multigraph',
-            'label': 'This is weird',
-            'metadata': {'weirdness': 100},
-            'graphs': [
-                {
-                    'type': "someType",
-                    'label': "someLabel",
-                    'directed': True,
-                    'metadata': {'bla': "some-meta-data"},
-                    'nodes': {
-                        "firstNodeId": {'label': "blubb-label", 'metadata': {'bla': "whoopp"}},
-                        "secondNodeId": {'label': "bla-label", 'metadata': {'bli': "whaaat"}},
-                    },
-                    'edges': [{
-                        'source': "firstNodeId",
-                        'target': "secondNodeId",
-                        'relation': "is-test-edge",
-                    }],
-                },
-                {
-                    'type': "otherType",
-                    'label': "otherLabel",
-                    'directed': False,
-                    'metadata': {'ble': "some-blumeta-data"},
-                    'nodes': {
-                        "other-firstNodeId": {'label': "effe-label", 'metadata': {'ufe': "schnad"}},
-                        "other-secondNodeId": {'label': "uffe-label", 'metadata': {'bame': "bral"}},
-                    },
-                    'edges': [{
-                        'source': "other-firstNodeId",
-                        'target': "other-secondNodeId",
-                        'relation': "is-ither-test-edge",
-                    }],
-                }
-            ]
-        }
-
-        self.assertEqual(Jgf.to_json(multigraph, validate=True), expected_json)
 
     # describe('#from json')
     def test_transform_single_graph_json_to_jgf_graph(self):
@@ -849,95 +718,6 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(graph.edges[0].source, 'firstNodeId')
         self.assertEqual(graph.edges[0].target, 'secondNodeId')
         self.assertEqual(graph.edges[0].relation, 'is-test-edge')
-
-    def test_transform_json_of_multigraph_to_jgf_multigraph(self):
-        """should transform json of a multigraph to JgfMultiGraph"""
-        json_data = {
-            'type': 'weird-multigraph',
-            'label': 'This is weird',
-            'metadata': {'weirdness': 100},
-            'graphs': [
-                {
-                    'type': "someType",
-                    'label': "someLabel",
-                    'directed': True,
-                    'metadata': {'bla': "some-meta-data"},
-                    'nodes': 
-                        {
-                            (id1:="firstNodeId"): {'label': "blubb-label", 'metadata': {'bla': "whoopp"}},
-                            (id2:="secondNodeId"): {'label': "bla-label", 'metadata': {'bli': "whaaat"}},
-                        },
-                    'edges': [{
-                        'source': "firstNodeId",
-                        'target': "secondNodeId",
-                        'relation': "is-test-edge",
-                    }],
-                },
-                {
-                    'type': "otherType",
-                    'label': "otherLabel",
-                    'directed': False,
-                    'metadata': {'ble': "some-blumeta-data"},
-                    'nodes': {
-                        (g2id1:="other-firstNodeId"): {'label': "effe-label", 'metadata': {'ufe': "schnad"}},
-                        (g2id2:="other-secondNodeId"): {'label': "uffe-label", 'metadata': {'bame': "bral"}},
-                    },
-                    'edges': [{
-                        'source': "other-firstNodeId",
-                        'target': "other-secondNodeId",
-                        'relation': "is-ither-test-edge",
-                    }],
-                }
-            ]
-        }
-
-        multigraph = Jgf.from_json(json_data, validate=True)
-
-        self.assertIsInstance(multigraph, JgfMultiGraph)
-        self.assertEqual(len(multigraph.graphs), 2)
-        self.assertEqual(multigraph.type, 'weird-multigraph')
-        self.assertEqual(multigraph.label, 'This is weird')
-        self.assertEqual(multigraph.metadata, {'weirdness': 100})
-
-        # Check First Graph
-        graph1 = multigraph.graphs[0]
-        self.assertIsInstance(graph1, JgfGraph)
-        self.assertEqual(graph1.type, 'someType')
-        self.assertEqual(graph1.label, 'someLabel')
-        self.assertEqual(graph1.metadata, {'bla': "some-meta-data"})
-        self.assertEqual(graph1.directed, True)
-        self.assertEqual(len(graph1.nodes), 2)
-        self.assertEqual(len(graph1.edges), 1)
-
-        self.assertIsInstance(graph1.nodes[id1], JgfNode)
-        self.assertEqual(graph1.nodes[id1].id, 'firstNodeId')
-        self.assertEqual(graph1.nodes[id1].label, 'blubb-label')
-        self.assertEqual(graph1.nodes[id1].metadata, {'bla': 'whoopp'})
-
-        self.assertIsInstance(graph1.edges[0], JgfEdge)
-        self.assertEqual(graph1.edges[0].source, 'firstNodeId')
-        self.assertEqual(graph1.edges[0].target, 'secondNodeId')
-        self.assertEqual(graph1.edges[0].relation, 'is-test-edge')
-
-        # Check Second Graph
-        graph2 = multigraph.graphs[1]
-        self.assertIsInstance(graph2, JgfGraph)
-        self.assertEqual(graph2.type, 'otherType')
-        self.assertEqual(graph2.label, 'otherLabel')
-        self.assertEqual(graph2.directed, False)
-        self.assertEqual(graph2.metadata, {'ble': "some-blumeta-data"})
-        self.assertEqual(len(graph2.nodes), 2)
-        self.assertEqual(len(graph2.edges), 1)
-
-        self.assertIsInstance(graph2.nodes[g2id1], JgfNode)
-        self.assertEqual(graph2.nodes[g2id1].id, 'other-firstNodeId')
-        self.assertEqual(graph2.nodes[g2id1].label, 'effe-label')
-        self.assertEqual(graph2.nodes[g2id1].metadata, {'ufe': "schnad"})
-
-        self.assertIsInstance(graph2.edges[0], JgfEdge)
-        self.assertEqual(graph2.edges[0].source, 'other-firstNodeId')
-        self.assertEqual(graph2.edges[0].target, 'other-secondNodeId')
-        self.assertEqual(graph2.edges[0].relation, 'is-ither-test-edge')
 
     def test_from_json_throws_error_for_invalid_json(self):
         """should throw error for json that does not have a graph or graphs property"""

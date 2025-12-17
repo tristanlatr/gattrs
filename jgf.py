@@ -4,6 +4,11 @@ A SUBSET OF JSON Graph Format (JGF) V2 https://jsongraphformat.info/
 The schema is simplified and adapted for serializing Python objects
 """
 
+# TODOS: 
+# - Add support for edges metadata
+# - Make the relation field required on edges
+
+from typing import List, Optional, Dict, Any
 
 _SCHEMA = {
   "$schema": "http://json-schema.org/draft-07/schema#",
@@ -77,9 +82,6 @@ _SCHEMA = {
     },
   }
 }
-
-
-from typing import List, Optional, Dict, Any
 
 class _Guard:
     """
@@ -382,69 +384,13 @@ class JgfGraph:
             'edges': len(self._edges),
         }
 
-class JgfMultiGraph:
-    """
-    Container for multiple Jgf graph objects in one object.
-    """
-
-    def __init__(self, type: str, label: str, metadata: Optional[Dict[str, Any]] = None):
-        """
-        Constructor.
-        
-        :param type: Multi graph classification.
-        :param label: A text display for the multi graph.
-        :param metadata: Custom multi graph metadata.
-        """
-        self.type = type
-        self.label = label
-        
-        # Initialize internal graphs list
-        self._graphs: List[JgfGraph] = []
-
-        # Note: In the JS constructor, it assigns directly to this._metadata, 
-        # bypassing the setter validation (which strictly requires a non-empty object).
-        # We mirror that behavior here to allow None during initialization.
-        self._metadata = metadata
-
-    def add_graph(self, graph: JgfGraph) -> None:
-        """
-        Adds a single graph.
-        :param graph: Graph to be added.
-        """
-        self._graphs.append(graph)
-
-    @property
-    def graphs(self) -> List[JgfGraph]:
-        """
-        Returns all graphs.
-        """
-        return self._graphs
-
-    @property
-    def metadata(self) -> Optional[Dict[str, Any]]:
-        """
-        Returns the multi graph meta data.
-        """
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, metadata: Dict[str, Any]) -> None:
-        """
-        Sets the multi graph meta data.
-        """
-        # The JS code uses Guard.assertValidMetadata here (not ...OrNull)
-        # This implies that if you set metadata explicitly via property, 
-        # it must be a valid, non-empty object.
-        _Guard.assert_valid_metadata(metadata)
-        self._metadata = metadata
-
 class Jgf:
     """
     Transforms graphs or multi graphs to json (dict) or vice versa.
     """
 
     @staticmethod
-    def from_json(json_data: Dict[str, Any], validate:bool=False) -> JgfGraph | JgfMultiGraph:
+    def from_json(json_data: Dict[str, Any], validate:bool=False) -> JgfGraph:
         """
         Creates a Jgf graph or multi graph from JSON (dict).
         :param json_data: JSON to be transformed.
@@ -458,20 +404,7 @@ class Jgf:
             jsonschema_validate(instance=json_data, schema=_SCHEMA)
         if 'graph' in json_data and json_data['graph'] is not None:
             return Jgf._graph_from_json(json_data['graph'])
-
-        if 'graphs' in json_data and json_data['graphs'] is not None:
-            mg_type = json_data.get('type', '')
-            mg_label = json_data.get('label', '')
-            mg_metadata = json_data.get('metadata', None)
-            
-            graph = JgfMultiGraph(mg_type, mg_label, mg_metadata)
-            
-            for graph_json in json_data['graphs']:
-                graph.add_graph(Jgf._graph_from_json(graph_json))
-
-            return graph
-
-        raise ValueError('Passed json has to have a "graph" or "graphs" property.')
+        raise ValueError('Passed json has to have a "graph" property.')
 
     @staticmethod
     def _graph_from_json(graph_json: Dict[str, Any]) -> JgfGraph:
@@ -509,7 +442,7 @@ class Jgf:
 
 
     @staticmethod
-    def to_json(graph: JgfGraph | JgfMultiGraph, validate:bool=False) -> Dict[str, Any]:
+    def to_json(graph: JgfGraph , validate:bool=False) -> Dict[str, Any]:
         """
         Transforms either a graph or a multi graph object to a JSON (dict) representation as per the spec.
         :param graph: The graph to be transformed to JSON.
@@ -519,32 +452,16 @@ class Jgf:
         if not isinstance(graph, JgfGraph) and not isinstance(graph, JgfMultiGraph):
             raise TypeError('expected graph to be either JgfGraph or JgfMultiGraph, got ' + str(type(graph)))
 
-        is_single_graph = isinstance(graph, JgfGraph)
-
         all_graphs_json: Dict[str, Any] = {
             'graphs': [],
         }
 
         Jgf._transform_graphs_to_json(graph, all_graphs_json)
 
-        if is_single_graph:
-            # If it was a single graph, we unwrap the list and return { "graph": ... }
-            # Accessing index 0 is safe because _transform_graphs_to_json pushed exactly one graph
-            dat = Jgf._remove_null_values({'graph': all_graphs_json['graphs'][0]})
+        # If it was a single graph, we unwrap the list and return { "graph": ... }
+        # Accessing index 0 is safe because _transform_graphs_to_json pushed exactly one graph
+        dat = Jgf._remove_null_values({'graph': all_graphs_json['graphs'][0]})
 
-            if validate:
-                from jsonschema import validate as jsonschema_validate
-                jsonschema_validate(instance=dat, schema=_SCHEMA)
-            
-            return dat
-
-        # If MultiGraph
-        all_graphs_json['type'] = graph.type
-        all_graphs_json['label'] = graph.label
-        all_graphs_json['metadata'] = graph.metadata
-
-        dat = Jgf._remove_null_values(all_graphs_json)
-        
         if validate:
             from jsonschema import validate as jsonschema_validate
             jsonschema_validate(instance=dat, schema=_SCHEMA)
@@ -552,23 +469,21 @@ class Jgf:
         return dat
     
     @staticmethod
-    def _transform_graphs_to_json(graph: JgfGraph | JgfMultiGraph, all_graphs_json: Dict[str, Any]) -> None:
-        normalized_graph = Jgf._normalize_to_multi_graph(graph)
-        
-        for single_graph in normalized_graph.graphs:
-            single_graph_json = {
-                'type': single_graph.type,
-                'label': single_graph.label,
-                'directed': single_graph.directed,
-                'metadata': single_graph.metadata,
-                'nodes': {},  # V2: Initialized as Dict
-                'edges': [],
-            }
+    def _transform_graphs_to_json(graph: JgfGraph, all_graphs_json: Dict[str, Any]) -> None:
 
-            Jgf._nodes_to_json(single_graph, single_graph_json)
-            Jgf._edges_to_json(single_graph, single_graph_json)
+        single_graph_json = {
+            'type': graph.type,
+            'label': graph.label,
+            'directed': graph.directed,
+            'metadata': graph.metadata,
+            'nodes': {},
+            'edges': [],
+        }
 
-            all_graphs_json['graphs'].append(single_graph_json)
+        Jgf._nodes_to_json(graph, single_graph_json)
+        Jgf._edges_to_json(graph, single_graph_json)
+
+        all_graphs_json['graphs'].append(single_graph_json)
 
     @staticmethod
     def _remove_null_values(data: Any) -> Any:
@@ -605,13 +520,3 @@ class Jgf:
             if node.metadata:
                 node_payload['metadata'] = node.metadata
             json_obj['nodes'][nid] = node_payload
-
-    @staticmethod
-    def _normalize_to_multi_graph(graph: JgfGraph | JgfMultiGraph) -> JgfMultiGraph:
-        if isinstance(graph, JgfGraph):
-            # Create a temporary multigraph holder
-            normalized_graph = JgfMultiGraph(type="", label="")
-            normalized_graph.add_graph(graph)
-            return normalized_graph
-        
-        return graph
