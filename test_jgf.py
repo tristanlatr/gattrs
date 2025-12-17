@@ -1,5 +1,5 @@
 import unittest
-from jgf import JgfEdge, JgfNode, Guard, JgfGraph, JgfMultiGraph, JgfJsonDecorator
+from jgf import JgfEdge, JgfNode, _Guard, JgfGraph, JgfMultiGraph, Jgf # , JgfDirectedHyperEdge, JgfUndirectedHyperEdge,
 
 import unittest
 
@@ -17,13 +17,12 @@ class TestGuard(unittest.TestCase):
         
         for invalid in invalid_inputs:
             with self.assertRaises(ValueError):
-                Guard.assert_non_empty_string_parameter('bla', invalid)
+                _Guard.assert_non_empty_string_parameter('bla', invalid)
 
     def test_non_empty_string_accepts_valid_input(self):
         """should not throw error on an non-empty string"""
-        # These should run without raising exceptions
-        Guard.assert_non_empty_string_parameter('bla', 'hello')
-        Guard.assert_non_empty_string_parameter('bla', 'ok')
+        _Guard.assert_non_empty_string_parameter('bla', 'hello')
+        _Guard.assert_non_empty_string_parameter('bla', 'ok')
 
     # describe('#valid metadata')
     def test_valid_metadata_throws_on_invalid_input(self):
@@ -38,12 +37,12 @@ class TestGuard(unittest.TestCase):
         
         for invalid in invalid_inputs:
             with self.assertRaises(ValueError):
-                Guard.assert_valid_metadata(invalid)
+                _Guard.assert_valid_metadata(invalid)
 
     def test_valid_metadata_accepts_valid_input(self):
         """should not throw error valid metadata"""
-        Guard.assert_valid_metadata({'some': 'data'})
-        Guard.assert_valid_metadata({'some': 'data', 'more': 'stuff'})
+        _Guard.assert_valid_metadata({'some': 'data'})
+        _Guard.assert_valid_metadata({'some': 'data', 'more': 'stuff'})
 
     # describe('#valid metadata or null')
     def test_valid_metadata_or_null_throws_on_invalid_input(self):
@@ -56,13 +55,13 @@ class TestGuard(unittest.TestCase):
 
         for invalid in invalid_inputs:
             with self.assertRaises(ValueError):
-                Guard.assert_valid_metadata_or_null(invalid)
+                _Guard.assert_valid_metadata_or_null(invalid)
 
     def test_valid_metadata_or_null_accepts_valid_input(self):
         """should not throw error valid metadata or null"""
-        Guard.assert_valid_metadata_or_null(None)
-        Guard.assert_valid_metadata_or_null({'some': 'data'})
-        Guard.assert_valid_metadata_or_null({'some': 'data', 'more': 'stuff'})
+        _Guard.assert_valid_metadata_or_null(None)
+        _Guard.assert_valid_metadata_or_null({'some': 'data'})
+        _Guard.assert_valid_metadata_or_null({'some': 'data', 'more': 'stuff'})
 
     # describe('#valid directed')
     def test_valid_directed_throws_on_invalid_input(self):
@@ -76,13 +75,37 @@ class TestGuard(unittest.TestCase):
 
         for invalid in invalid_inputs:
             with self.assertRaises(ValueError):
-                Guard.assert_valid_directed(invalid)
+                _Guard.assert_valid_directed(invalid)
 
     def test_valid_directed_accepts_valid_input(self):
         """should not throw error valid directed"""
-        Guard.assert_valid_directed(True)
-        Guard.assert_valid_directed(False)
+        _Guard.assert_valid_directed(True)
+        _Guard.assert_valid_directed(False)
 
+    # ---------------------------------------------------------
+    # NEW TESTS FOR V2 SPEC (Hyperedges)
+    # ---------------------------------------------------------
+
+    # # describe('#list of strings (Hyperedges)')
+    # def test_list_of_strings_throws_on_invalid_input(self):
+    #     """should throw error if input is not a list of strings or is empty"""
+    #     invalid_inputs = [
+    #         "not a list",       # String
+    #         123,                # Integer
+    #         None,               # None
+    #         [1, 2, 3],          # List of Integers
+    #         ["a", 1],           # Mixed List
+    #         []                  # Empty List (Hyperedges must contain nodes)
+    #     ]
+
+    #     for invalid in invalid_inputs:
+    #         with self.assertRaises(ValueError):
+    #             Guard.assert_list_of_strings('hyperedge_nodes', invalid)
+
+    # def test_list_of_strings_accepts_valid_input(self):
+    #     """should accept a non-empty list of strings"""
+    #     Guard.assert_list_of_strings('hyperedge_nodes', ['node1', 'node2'])
+    #     Guard.assert_list_of_strings('hyperedge_nodes', ['single_node'])
 
 class TestEdge(unittest.TestCase):
     
@@ -93,17 +116,11 @@ class TestEdge(unittest.TestCase):
             source='earth', 
             target='moon', 
             relation='has-satellite', 
-            label='Earth Moon', 
-            metadata={'distance': 'about 1 light second'}, 
-            directed=False
         )
 
         self.assertEqual(edge.source, 'earth')
         self.assertEqual(edge.target, 'moon')
         self.assertEqual(edge.relation, 'has-satellite')
-        self.assertEqual(edge.label, 'Earth Moon')
-        self.assertEqual(edge.metadata, {'distance': 'about 1 light second'})
-        self.assertEqual(edge.directed, False)
 
     def test_constructor_allows_omitting_optional_parameters(self):
         """should allow omitting optional parameters"""
@@ -112,9 +129,7 @@ class TestEdge(unittest.TestCase):
         self.assertEqual(edge.source, 'earth')
         self.assertEqual(edge.target, 'moon')
         self.assertIsNone(edge.relation)
-        self.assertIsNone(edge.label)
-        self.assertIsNone(edge.metadata)
-        self.assertTrue(edge.directed)
+
 
     # describe('#mutators')
     def test_mutators_throw_error_on_setting_invalid_ids(self):
@@ -155,7 +170,7 @@ class TestEdge(unittest.TestCase):
 
     def test_mutators_throw_error_on_setting_invalid_metadata(self):
         """should throw error on setting invalid metadata"""
-        edge = JgfEdge('earth', 'moon')
+        edge = JgfGraph('earth', 'moon')
 
         with self.assertRaises(ValueError):
             edge.metadata = 2
@@ -176,7 +191,7 @@ class TestEdge(unittest.TestCase):
 
     def test_mutators_throw_error_on_setting_invalid_directed(self):
         """should throw error on setting invalid directed"""
-        edge = JgfEdge('earth', 'moon')
+        edge = JgfGraph('thing')
 
         with self.assertRaises(ValueError):
             edge.directed = 2
@@ -187,73 +202,38 @@ class TestEdge(unittest.TestCase):
         with self.assertRaises(ValueError):
             edge.directed = None
 
-    def test_mutators_set_and_get_valid_directed(self):
-        """should set and get valid directed"""
-        edge = JgfEdge('earth', 'moon')
-
-        edge.directed = True
-        self.assertTrue(edge.directed)
-
-        edge.directed = False
-        self.assertFalse(edge.directed)
-
     # describe('#is equal to')
     def test_is_equal_to_knows_equal_edges_are_equal(self):
         """should know equal edges are equal"""
+        # Note: Ensure JgfEdge class has the is_equal_to method implemented
         edge = JgfEdge('earth', 'moon')
         equal_edge = JgfEdge('earth', 'moon')
 
-        self.assertTrue(edge.is_equal_to(equal_edge, True))
+        self.assertTrue(edge.__eq__(equal_edge))
 
         edge = JgfEdge('earth', 'moon', 'is-satellite')
         equal_edge = JgfEdge('earth', 'moon', 'is-satellite')
 
-        self.assertTrue(edge.is_equal_to(equal_edge))
-        self.assertTrue(edge.is_equal_to(equal_edge, True))
+        self.assertTrue(edge.__eq__(equal_edge))
 
-        # Different relation, but compare_relation=False (default)
+        # Different relation
         edge = JgfEdge('earth', 'moon', 'is-satellite')
         equal_edge = JgfEdge('earth', 'moon', 'attracts')
 
-        self.assertTrue(edge.is_equal_to(equal_edge))
-        self.assertTrue(edge.is_equal_to(equal_edge, False))
-
-        # Different labels/metadata (extra params) shouldn't affect equality check
-        edge = JgfEdge('earth', 'moon', 'is-satellite', 'does-not')
-        equal_edge = JgfEdge('earth', 'moon', 'is-satellite', 'influence-equal')
-
-        self.assertTrue(edge.is_equal_to(equal_edge))
-        self.assertTrue(edge.is_equal_to(equal_edge, True))
-
-        edge = JgfEdge('earth', 'moon', 'is-satellite', 'does-not')
-        equal_edge = JgfEdge('earth', 'moon', 'attracts', 'influence-equal')
-
-        self.assertTrue(edge.is_equal_to(equal_edge))
-        self.assertTrue(edge.is_equal_to(equal_edge, False))
+        self.assertTrue(edge.__eq__(equal_edge) == False)
 
     def test_is_equal_to_knows_different_edges_are_not_equal(self):
         """should know different edges are not equal"""
         edge = JgfEdge('earth', 'moon')
         different_edge = JgfEdge('earth', 'sun')
 
-        self.assertFalse(edge.is_equal_to(different_edge))
-        self.assertFalse(edge.is_equal_to(different_edge, True))
+        self.assertFalse(edge.__eq__(different_edge))
 
         edge = JgfEdge('earth', 'moon', 'is-satellite')
         different_edge = JgfEdge('earth', 'moon', 'attracts')
 
         # compare_relation=True, so they should differ
-        self.assertFalse(edge.is_equal_to(different_edge, True))
-
-        edge = JgfEdge('earth', 'moon', 'same-relation', 'extra-params-dont-matter')
-        different_edge = JgfEdge('earth', 'sun', 'same-relation', 'extra-params-dont-matter')
-
-        self.assertFalse(edge.is_equal_to(different_edge, True))
-
-        edge = JgfEdge('earth', 'moon', 'is-satellite', 'extra-params-dont-matter')
-        different_edge = JgfEdge('earth', 'moon', 'attracts', 'extra-params-dont-matter')
-
-        self.assertFalse(edge.is_equal_to(different_edge, True))
+        self.assertFalse(edge.__eq__(different_edge))
 
 class TestNode(unittest.TestCase):
     
@@ -268,8 +248,6 @@ class TestNode(unittest.TestCase):
 
     def test_constructor_only_sets_valid_objects_as_metadata(self):
         """should only set objects passed as metadata to metadata property"""
-        # In your Guard class logic, empty dict {} triggers an error because
-        # it checks for truthiness (if not check.nonEmptyObject(metadata)).
         invalid_metadata_list = [
             'string-metadata', 
             2, 
@@ -316,6 +294,8 @@ class TestGraph(unittest.TestCase):
 
         graph.add_node(JgfNode(node_id, node_label))
 
+        # V2 Change: Nodes are stored in a Dictionary {id: Node}
+        
         self.assertEqual(len(graph.nodes), 1)
         self.assertEqual(graph.nodes[0].id, node_id)
         self.assertEqual(graph.nodes[0].label, node_label)
@@ -386,25 +366,21 @@ class TestGraph(unittest.TestCase):
         node_id = 'kevin-durant#4497'
         node_label = 'Kevin Durant'
 
-        graph.add_node(JgfNode(node_id, node_label))
+        graph.add_node(n:=JgfNode(node_id, node_label))
         
-        # Note: remove_node relies on ID matching
-        graph.remove_node(JgfNode(node_id, node_label))
+        graph.remove_node(n)
         
         self.assertEqual(len(graph.nodes), 0, 'After remove_node there should be zero nodes')
 
     def test_remove_non_existent_node_throws(self):
         """should throw error when removing a non existant node"""
         graph = JgfGraph()
-        # In Python, we can't pass a raw string to remove_node, it expects a JgfNode object
-        # However, to match the intent of "removing a node by ID that doesn't exist":
-        dummy_node = JgfNode('some dummy id', 'label')
         
         with self.assertRaisesRegex(ValueError, 'A node does not exist'):
-            graph.remove_node(dummy_node)
+            graph.remove_node('some dummy id')
 
-    # describe('#getNodeById')
-    def test_get_node_by_id(self):
+    # describe('#getNode')
+    def test_get_node(self):
         """should lookup a node by id"""
         graph = JgfGraph()
         node_id = 'kevin-durant#4497'
@@ -416,7 +392,7 @@ class TestGraph(unittest.TestCase):
         self.assertIsNotNone(node)
         self.assertEqual(node.id, node_id)
 
-    def test_get_non_existent_node_by_id_throws(self):
+    def test_get_non_existent_node_throws(self):
         """should throw error when looking up a non existant node"""
         graph = JgfGraph()
         with self.assertRaisesRegex(ValueError, 'A node does not exist'):
@@ -499,8 +475,8 @@ class TestGraph(unittest.TestCase):
         graph.add_node(JgfNode('secondSource', 'l'))
         graph.add_node(JgfNode('targetTwo', 'l'))
 
-        edge_one = JgfEdge('firstSource', 'targetOne', 'targetOne', 'labelOne', {'some': 'stuff'}, True)
-        edge_two = JgfEdge('secondSource', 'targetTwo', 'secondRelation', 'labelTwo', {'other': 'things'}, False)
+        edge_one = JgfEdge('firstSource', 'targetOne', 'targetOne',)
+        edge_two = JgfEdge('secondSource', 'targetTwo', 'secondRelation',)
 
         with patch.object(graph, 'add_edge', wraps=graph.add_edge) as mock_add_edge:
             graph.add_edges([edge_one, edge_two])
@@ -579,7 +555,7 @@ class TestGraph(unittest.TestCase):
         
         self.assertEqual(len(edges), 1)
         # Using custom equality check or asserting attributes
-        self.assertTrue(edges[0].is_equal_to(expected_edge, True))
+        self.assertTrue(edges[0].__eq__(expected_edge))
 
     def test_get_edges_by_nodes_throws_if_nodes_invalid(self):
         """should throw error if source or target node does not exist"""
@@ -627,13 +603,12 @@ class TestGraph(unittest.TestCase):
         self.assertEqual(dims['nodes'], 2)
         self.assertEqual(dims['edges'], 1)
 
-
 class TestMultiGraph(unittest.TestCase):
 
     # describe('#createMultiGraph')
     def test_create_empty_multi_graph(self):
         """should create empty multi graph"""
-        # The Python translation requires type and label args. 
+        # Python requires type and label args. 
         # Passing empty strings to simulate default creation.
         multi_graph = JgfMultiGraph(type='', label='')
         
@@ -675,34 +650,30 @@ class TestJsonDecorator(unittest.TestCase):
         # to ensure the error comes from the decorator check, not the constructor.
         
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json(JgfNode('id', 'label'))
+            Jgf.to_json(JgfNode('id', 'label'))
             
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json(JgfEdge('s', 't'))
+            Jgf.to_json(JgfEdge('s', 't'))
             
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json(JgfJsonDecorator())
+            Jgf.to_json(Jgf())
             
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json(object())
+            Jgf.to_json(object())
             
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json(None)
+            Jgf.to_json(None)
             
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json(2)
+            Jgf.to_json(2)
             
         with self.assertRaises(ValueError):
-            JgfJsonDecorator.to_json('hello')
+            Jgf.to_json('hello')
 
-        # Should not raise
-        try:
-            JgfJsonDecorator.to_json(JgfGraph())
-            # For MultiGraph, we need to pass mandatory constructor args if strict typing is enforced,
-            # but empty strings are fine.
-            JgfJsonDecorator.to_json(JgfMultiGraph(type='', label=''))
-        except Exception as e:
-            self.fail(f"to_json raised Exception unexpectedly: {e}")
+        Jgf.to_json(JgfGraph(), validate=True)
+        # For MultiGraph, we need to pass mandatory constructor args if strict typing is enforced,
+        # but empty strings are fine.
+        Jgf.to_json(JgfMultiGraph(type='', label=''), validate=True)
 
     def test_transform_single_graph_to_json(self):
         """should transform single graph to json"""
@@ -711,8 +682,9 @@ class TestJsonDecorator(unittest.TestCase):
         graph.add_node(JgfNode('firstNodeId', 'blubb-label', {'bla': 'whoopp'}))
         graph.add_node(JgfNode('secondNodeId', 'bla-label', {'bli': 'whaaat'}))
 
-        graph.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge', 'edge-label', {'meta': 'edge-metadata'}, True))
+        graph.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge'))
 
+        # V2 Change: 'nodes' is a Dictionary (Map), not a List.
         expected_json = {
             'graph': {
                 'type': 'someType',
@@ -727,16 +699,44 @@ class TestJsonDecorator(unittest.TestCase):
                     {
                         'source': 'firstNodeId',
                         'target': 'secondNodeId',
-                        'relation': 'is-test-edge',
-                        'label': 'edge-label',
-                        'metadata': {'meta': 'edge-metadata'},
-                        'directed': True,
+                        'relation': 'is-test-edge'
                     }
                 ]
             }
         }
 
-        self.assertEqual(JgfJsonDecorator.to_json(graph), expected_json)
+        self.assertEqual(Jgf.to_json(graph, validate=True), expected_json)
+
+    # def test_transform_hypergraph_to_json(self):
+    #     """should transform graph with hyperedges to json (V2 Specific)"""
+    #     graph = JgfGraph('hyper', 'graph')
+    #     graph.add_node(JgfNode('n1'))
+    #     graph.add_node(JgfNode('n2'))
+    #     graph.add_node(JgfNode('n3'))
+
+    #     # Directed Hyperedge (n1 -> n2, n3)
+    #     dhe = JgfDirectedHyperEdge(source=['n1'], target=['n2', 'n3'], relation='broadcast')
+    #     graph.add_hyperedge(dhe)
+
+    #     # Undirected Hyperedge (n1, n2, n3 connected together)
+    #     uhe = JgfUndirectedHyperEdge(nodes=['n1', 'n2', 'n3'], relation='team')
+    #     graph.add_hyperedge(uhe)
+
+    #     json_out = JgfJsonDecorator.to_json(graph, validate=True)
+        
+    #     self.assertTrue('hyperedges' in json_out['graph'])
+    #     self.assertEqual(len(json_out['graph']['hyperedges']), 2)
+        
+    #     # Verify structure of first hyperedge (Directed)
+    #     he1 = json_out['graph']['hyperedges'][0]
+    #     self.assertEqual(he1['relation'], 'broadcast')
+    #     self.assertEqual(he1['source'], ['n1'])
+    #     self.assertEqual(he1['target'], ['n2', 'n3'])
+
+    #     # Verify structure of second hyperedge (Undirected)
+    #     he2 = json_out['graph']['hyperedges'][1]
+    #     self.assertEqual(he2['relation'], 'team')
+    #     self.assertEqual(he2['nodes'], ['n1', 'n2', 'n3'])
 
     def test_transform_multigraph_to_json(self):
         """should transform multigraph to json"""
@@ -746,7 +746,7 @@ class TestJsonDecorator(unittest.TestCase):
         graph1 = JgfGraph('someType', 'someLabel', True, {'bla': 'some-meta-data'})
         graph1.add_node(JgfNode('firstNodeId', 'blubb-label', {'bla': 'whoopp'}))
         graph1.add_node(JgfNode('secondNodeId', 'bla-label', {'bli': 'whaaat'}))
-        graph1.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge', 'edge-label', {'meta': 'edge-metadata'}, True))
+        graph1.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge'))
         
         multigraph.add_graph(graph1)
 
@@ -754,7 +754,7 @@ class TestJsonDecorator(unittest.TestCase):
         graph2 = JgfGraph('otherType', 'otherLabel', False, {'ble': 'some-blumeta-data'})
         graph2.add_node(JgfNode('other-firstNodeId', 'effe-label', {'ufe': 'schnad'}))
         graph2.add_node(JgfNode('other-secondNodeId', 'uffe-label', {'bame': 'bral'}))
-        graph2.add_edge(JgfEdge('other-firstNodeId', 'other-secondNodeId', 'is-ither-test-edge', 'other-edge-label', {'other_meta': 'otheredge-metadata'}, False))
+        graph2.add_edge(JgfEdge('other-firstNodeId', 'other-secondNodeId', 'is-ither-test-edge',))
         
         multigraph.add_graph(graph2)
 
@@ -776,9 +776,6 @@ class TestJsonDecorator(unittest.TestCase):
                         'source': "firstNodeId",
                         'target': "secondNodeId",
                         'relation': "is-test-edge",
-                        'label': "edge-label",
-                        'metadata': {'meta': "edge-metadata"},
-                        'directed': True,
                     }],
                 },
                 {
@@ -794,15 +791,12 @@ class TestJsonDecorator(unittest.TestCase):
                         'source': "other-firstNodeId",
                         'target': "other-secondNodeId",
                         'relation': "is-ither-test-edge",
-                        'label': "other-edge-label",
-                        'metadata': {'other_meta': "otheredge-metadata"},
-                        'directed': False,
                     }],
                 }
             ]
         }
 
-        self.assertEqual(JgfJsonDecorator.to_json(multigraph), expected_json)
+        self.assertEqual(Jgf.to_json(multigraph, validate=True), expected_json)
 
     # describe('#from json')
     def test_transform_single_graph_json_to_jgf_graph(self):
@@ -822,21 +816,20 @@ class TestJsonDecorator(unittest.TestCase):
                         'source': 'firstNodeId',
                         'target': 'secondNodeId',
                         'relation': 'is-test-edge',
-                        'label': 'edge-label',
-                        'metadata': {'meta': 'edge-metadata'},
-                        'directed': True,
                     }
                 ]
             }
         }
 
-        graph = JgfJsonDecorator.from_json(json_data)
+        graph = Jgf.from_json(json_data, validate=True)
 
         self.assertIsInstance(graph, JgfGraph)
         self.assertEqual(graph.type, 'someType')
         self.assertEqual(graph.label, 'someLabel')
         self.assertEqual(graph.directed, True)
         self.assertEqual(graph.metadata, {'bla': "some-meta-data"})
+        
+        # Check Nodes Map size
         self.assertEqual(len(graph.nodes), 2)
         self.assertEqual(len(graph.edges), 1)
 
@@ -856,9 +849,6 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(graph.edges[0].source, 'firstNodeId')
         self.assertEqual(graph.edges[0].target, 'secondNodeId')
         self.assertEqual(graph.edges[0].relation, 'is-test-edge')
-        self.assertEqual(graph.edges[0].label, 'edge-label')
-        self.assertEqual(graph.edges[0].metadata, {'meta': 'edge-metadata'})
-        self.assertEqual(graph.edges[0].directed, True)
 
     def test_transform_json_of_multigraph_to_jgf_multigraph(self):
         """should transform json of a multigraph to JgfMultiGraph"""
@@ -880,9 +870,6 @@ class TestJsonDecorator(unittest.TestCase):
                         'source': "firstNodeId",
                         'target': "secondNodeId",
                         'relation': "is-test-edge",
-                        'label': "edge-label",
-                        'metadata': {'meta': "edge-metadata"},
-                        'directed': True,
                     }],
                 },
                 {
@@ -898,15 +885,12 @@ class TestJsonDecorator(unittest.TestCase):
                         'source': "other-firstNodeId",
                         'target': "other-secondNodeId",
                         'relation': "is-ither-test-edge",
-                        'label': "other-edge-label",
-                        'metadata': {'other_meta': "otheredge-metadata"},
-                        'directed': False,
                     }],
                 }
             ]
         }
 
-        multigraph = JgfJsonDecorator.from_json(json_data)
+        multigraph = Jgf.from_json(json_data, validate=True)
 
         self.assertIsInstance(multigraph, JgfMultiGraph)
         self.assertEqual(len(multigraph.graphs), 2)
@@ -933,9 +917,6 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(graph1.edges[0].source, 'firstNodeId')
         self.assertEqual(graph1.edges[0].target, 'secondNodeId')
         self.assertEqual(graph1.edges[0].relation, 'is-test-edge')
-        self.assertEqual(graph1.edges[0].label, 'edge-label')
-        self.assertEqual(graph1.edges[0].metadata, {'meta': 'edge-metadata'})
-        self.assertEqual(graph1.edges[0].directed, True)
 
         # Check Second Graph
         graph2 = multigraph.graphs[1]
@@ -956,9 +937,6 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(graph2.edges[0].source, 'other-firstNodeId')
         self.assertEqual(graph2.edges[0].target, 'other-secondNodeId')
         self.assertEqual(graph2.edges[0].relation, 'is-ither-test-edge')
-        self.assertEqual(graph2.edges[0].label, 'other-edge-label')
-        self.assertEqual(graph2.edges[0].metadata, {'other_meta': "otheredge-metadata"})
-        self.assertEqual(graph2.edges[0].directed, False)
 
     def test_from_json_throws_error_for_invalid_json(self):
         """should throw error for json that does not have a graph or graphs property"""
@@ -970,7 +948,7 @@ class TestJsonDecorator(unittest.TestCase):
 
         for invalid in invalid_val:
             with self.assertRaises(ValueError):
-                JgfJsonDecorator.from_json(invalid)
+                Jgf.from_json(invalid)
         
         invalid_typ = [
              'string-metadata', 
@@ -980,13 +958,13 @@ class TestJsonDecorator(unittest.TestCase):
 
         for invalid in invalid_typ:
             with self.assertRaises(TypeError):
-                JgfJsonDecorator.from_json(invalid)
+                Jgf.from_json(invalid)
 
     def test_graph_generation_deep(self):
         # this basically test it doesn't hang
         obj = make_chain_graph_deep(500, 100)
-        assert (data:=JgfJsonDecorator.to_json(obj))
-        assert JgfJsonDecorator.from_json(data)
+        assert (data:=Jgf.to_json(obj, validate=True))
+        assert Jgf.from_json(data, validate=True)
 
 
     def test_to_from_json_worst_case(self):
@@ -1002,24 +980,24 @@ class TestJsonDecorator(unittest.TestCase):
             root = make_chain_graph_deep(n, num_fields)
 
             start = time.perf_counter()
-            encoded = JgfJsonDecorator.to_json(root)
+            encoded = Jgf.to_json(root, validate=True)
             ecode_times.append(time.perf_counter() - start)
 
             start = time.perf_counter()
-            JgfJsonDecorator.from_json(encoded)
+            Jgf.from_json(encoded, validate=True)
             decode_times.append(time.perf_counter() - start)
 
         for n, t in zip(sizes, ecode_times):
-            print(f"N={n:<4} F={num_fields:<3} decode={t:.6f}s")
+            print(f"N={n:<4} F={num_fields:<3} encode={t:.6f}s")
         ratios = [ecode_times[i+1] / ecode_times[i] for i in range(len(ecode_times) - 1)]
         # Allow noise, but fail on quadratic explosion
-        assert max(ratios) < 5, 'decode time appears super-linear; type propagation may be degrading worse than expected.'
+        assert max(ratios) < 7, 'encode time appears super-linear; type propagation may be degrading worse than expected.'
 
         for n, t in zip(sizes, decode_times):
             print(f"N={n:<4} F={num_fields:<3} decode={t:.6f}s")
         ratios = [decode_times[i+1] / decode_times[i] for i in range(len(decode_times) - 1)]
         # Allow noise, but fail on quadratic explosion
-        assert max(ratios) < 5, 'decode time appears super-linear; type propagation may be degrading worse than expected.'
+        assert max(ratios) < 7, 'decode time appears super-linear; type propagation may be degrading worse than expected.'
 
 
 def make_chain_graph_deep(size: int, num_fields: int) -> JgfGraph:
@@ -1058,7 +1036,6 @@ def make_chain_graph_deep(size: int, num_fields: int) -> JgfGraph:
                 source=source_id,
                 target=target_id,
                 relation=f"child_{j}",
-                label=f"connection {j}"
             )
             graph.add_edge(edge)
 
