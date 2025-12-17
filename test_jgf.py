@@ -234,6 +234,15 @@ class TestEdge(unittest.TestCase):
 
         # compare_relation=True, so they should differ
         self.assertFalse(edge.__eq__(different_edge))
+    
+    def test_edge_metadata(self):
+        """should consider metadata in equality checks"""
+        edge = JgfEdge('earth', 'moon', 'is-satellite', {'key': 'value'})
+        equal_edge = JgfEdge('earth', 'moon', 'is-satellite', {'key': 'value'})
+        different_edge = JgfEdge('earth', 'moon', 'is-satellite', {'key': 'different'})
+
+        self.assertTrue(edge.__eq__(equal_edge))
+        self.assertFalse(edge.__eq__(different_edge))
 
 class TestNode(unittest.TestCase):
     
@@ -718,6 +727,30 @@ class TestJsonDecorator(unittest.TestCase):
         self.assertEqual(graph.edges[0].source, 'firstNodeId')
         self.assertEqual(graph.edges[0].target, 'secondNodeId')
         self.assertEqual(graph.edges[0].relation, 'is-test-edge')
+    
+    def test_edge_metadata(self):
+        """should transform edge metadata from json to JgfEdge"""
+        json_data = {
+            'graph': {
+                'nodes': {
+                    'n1': {'label': 'Node 1'},
+                    'n2': {'label': 'Node 2'},
+                },
+                'edges': [
+                    {
+                        'source': 'n1',
+                        'target': 'n2',
+                        'relation': 'connects-to',
+                        'metadata': {'weight': 5, 'color': 'red'}
+                    }
+                ]
+            }
+        }
+
+        graph = Jgf.from_json(json_data, validate=True)
+
+        self.assertIsInstance(graph.edges[0], JgfEdge)
+        self.assertEqual(graph.edges[0].metadata, {'weight': 5, 'color': 'red'})
 
     def test_from_json_throws_error_for_invalid_json(self):
         """should throw error for json that does not have a graph or graphs property"""

@@ -5,7 +5,6 @@ The schema is simplified and adapted for serializing Python objects
 """
 
 # TODOS: 
-# - Add support for edges metadata
 # - Make the relation field required on edges
 
 from typing import List, Optional, Dict, Any
@@ -25,19 +24,6 @@ _SCHEMA = {
         "graph"
       ]
     },
-    {
-      "type": "object",
-      "properties": {
-        "graphs": {
-          "type": "array",
-          "items": { "$ref": "#/definitions/graph" }
-        },
-        "label": { "type": "string" },
-        "type": { "type": "string" },
-        "metadata": { "type": [ "object" ] },
-      },
-      "additionalProperties": False
-    }
   ],
   "definitions": {
     "graph": {
@@ -77,6 +63,7 @@ _SCHEMA = {
         "source": { "type": "string" },
         "target": { "type": "string" },
         "relation": { "type": "string" },
+        "metadata": { "type": [ "object" ] }, 
       },
       "required": [ "source", "target", "relation" ]
     },
@@ -129,7 +116,9 @@ class JgfEdge:
     In graph theory, edges are also called lines or links.
     """
 
-    def __init__(self, source: str, target: str, relation: Optional[str] = None):
+    def __init__(self, source: str, target: str, 
+                 relation: Optional[str] = None, 
+                 metadata: Optional[Dict[str, Any]] = None):
         """
         Constructor.
         
@@ -139,6 +128,7 @@ class JgfEdge:
         self.source = source
         self.target = target
         self.relation = relation
+        self.metadata = metadata
 
     # Source Property
     @property
@@ -159,6 +149,15 @@ class JgfEdge:
     def target(self, value: str) -> None:
         _Guard.assert_non_empty_string_parameter('target', value)
         self._target = value
+    
+    @property
+    def metadata(self) -> Optional[Dict[str, Any]]:
+        return self._metadata
+    
+    @metadata.setter
+    def metadata(self, value: Optional[Dict[str, Any]]) -> None:
+        _Guard.assert_valid_metadata_or_null(value)
+        self._metadata = value
 
     def __eq__(self, edge: 'JgfEdge') -> bool:
         """
@@ -172,6 +171,7 @@ class JgfEdge:
             edge.source == self.source
             and edge.target == self.target
             and edge.relation == self.relation
+            and edge.metadata == self.metadata
         )
 
 class JgfNode:
@@ -425,7 +425,7 @@ class Jgf:
                 node = JgfNode(
                     id=nid,
                     label=n_data.get('label'),
-                    metadata=n_data.get('metadata')
+                    metadata=n_data.get('metadata'),
                 )
                 graph.add_node(node)
 
@@ -435,6 +435,7 @@ class Jgf:
                 source=e_data['source'],
                 target=e_data['target'],
                 relation=e_data.get('relation'),
+                metadata=e_data.get('metadata'),
             )
             graph.add_edge(edge)
 
@@ -449,8 +450,8 @@ class Jgf:
         :raises ValueError: If the passed graph or multi graph can not be transformed to JSON.
         :returns: A JSON representation of the passed graph or multi graph as according to the JGF.
         """
-        if not isinstance(graph, JgfGraph) and not isinstance(graph, JgfMultiGraph):
-            raise TypeError('expected graph to be either JgfGraph or JgfMultiGraph, got ' + str(type(graph)))
+        if not isinstance(graph, JgfGraph):
+            raise TypeError('expected graph to be either JgfGraph, got ' + str(type(graph)))
 
         all_graphs_json: Dict[str, Any] = {
             'graphs': [],
@@ -509,6 +510,7 @@ class Jgf:
                 'source': edge.source,
                 'target': edge.target,
                 'relation': edge.relation,
+                'metadata': edge.metadata,
             })
 
     @staticmethod
