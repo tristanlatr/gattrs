@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime
 
 from jgf import JgfNode, JgfEdge, JgfGraph, Jgf
-from gson import  Encoder, Decoder
+from gson import  Encoder, Decoder, _type_of
 
 class TestGJSON(unittest.TestCase):
 
@@ -438,6 +438,299 @@ class TestUnsupportedAndInvalid(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             self.decoder.decode(graph)
+
+# --- 1. Define Sample Dataclasses ---
+
+import dataclasses
+
+@dataclasses.dataclass
+class Person:
+    """Regular Mutable Dataclass"""
+    name: str
+    friend: 'Person' = None
+
+@dataclasses.dataclass(frozen=True)
+class Point:
+    """Frozen Immutable Dataclass (Hashable)"""
+    x: int
+    y: int
+
+@dataclasses.dataclass(frozen=True)
+class TeamID:
+    """Frozen Dataclass wrapping a primitive"""
+    code: str
+
+@dataclasses.dataclass
+class Team:
+    """Mutable Dataclass using Frozen objects as keys"""
+    # Key: TeamID, Value: Person leader
+    members: dict
+
+@dataclasses.dataclass
+class User:
+    name: str
+
+@dataclasses.dataclass(frozen=True)
+class GeoLoc:
+    lat: float
+    lng: float
+
+@dataclasses.dataclass
+class KitchenSink:
+    # Mix of features: lists, dicts with frozen keys, tuples, shared refs
+    tags: list[str]
+    locations: dict[GeoLoc, str]
+    users: tuple[User, ...]
+    primary_user: User  # Shared reference to one of the users in the tuple
+
+@dataclasses.dataclass
+class StrictConfig:
+    version: int
+    debug: bool
+
+class TestDataclasses(unittest.TestCase):
+    
+    def setUp(self):
+        self.encoder = enc = Encoder()
+        self.decoder = dec = Decoder()
+        
+        # Register our specific test classes
+        enc.register_class('person', Person)
+        enc.register_class('point', Point)
+        enc.register_class('team_id', TeamID)
+        enc.register_class('team', Team)
+
+        dec.register_class('person', Person)
+        dec.register_class('point', Point)
+        dec.register_class('team_id', TeamID)
+        dec.register_class('team', Team)
+
+    def test_mutable_dataclass_cycle(self):
+        """
+        Scenario: Two regular dataclasses referencing each other.
+        Architecture: Should use Shell creation to resolve the cycle.
+        """
+        alice = Person(name="Alice")
+        bob = Person(name="Bob")
+        
+        # Create Cycle
+        alice.friend = bob
+        bob.friend = alice
+        
+        # Encode/Decode
+        graph = self.encoder.encode(alice)
+        decoded_alice = self.decoder.decode(graph)
+        
+        # Assertions
+        self.assertIsInstance(decoded_alice, Person)
+        self.assertEqual(decoded_alice.name, "Alice")
+        self.assertIsInstance(decoded_alice.friend, Person)
+        self.assertEqual(decoded_alice.friend.name, "Bob")
+        
+        # Identity/Cycle Check
+        self.assertIs(decoded_alice.friend.friend, decoded_alice, "Cycle was not preserved")
+
+    def test_frozen_dataclass_as_dict_key(self):
+        """
+        Scenario: Frozen dataclasses used as keys in a standard dict.
+        Architecture: Must use Materialization to exist before insertion into dict.
+        """
+        p1 = Point(0, 0)
+        p2 = Point(10, 20)
+        
+        data = {
+            p1: "Origin",
+            p2: "Destination"
+        }
+        
+        graph = self.encoder.encode(data)
+        decoded = self.decoder.decode(graph)
+        
+        self.assertEqual(decoded[Point(0, 0)], "Origin", f"Failed to retrieve value for Point(0, 0), key are: {list(decoded.keys())}")
+        self.assertEqual(decoded[Point(10, 20)], "Destination")
+
+    def test_complex_hybrid_structure(self):
+        """
+        Scenario: A Mutable Dataclass (Team) that uses Frozen Dataclasses (TeamID) as keys.
+        Architecture:
+        1. Pass 1: Creates 'Team' Shell.
+        2. Pass 2: Fills 'Team'. Encountering 'TeamID' keys triggers Materialization of TeamID.
+        """
+        leader = Person(name="Captain")
+        id_alpha = TeamID(code="ALPHA")
+        
+        team = Team(members={
+            id_alpha: leader
+        })
+        
+        graph = self.encoder.encode(team)
+        print(Jgf.to_json(graph))
+        decoded_team = self.decoder.decode(graph)
+        
+        self.assertIsInstance(decoded_team, Team)
+        self.assertIsInstance(decoded_team.members, dict)
+        
+        # Check Key
+        key = list(decoded_team.members.keys())[0]
+        self.assertIsInstance(key, TeamID)
+        self.assertEqual(key.code, "ALPHA")
+        
+        # Check Value
+        val = decoded_team.members[key]
+        self.assertIsInstance(val, Person)
+        self.assertEqual(val.name, "Captain")
+
+    def test_frozen_containing_mutable(self):
+        """
+        Scenario: A Frozen dataclass holding a Mutable list.
+        Architecture: The List Shell must be created first (Pass 1), then passed 
+        to the Frozen Materializer (Pass 2/On Demand).
+        """
+        @dataclasses.dataclass(frozen=True)
+        class Wrapper:
+            items: list[int]
+
+        # Register this specific inner class
+        self.encoder.register_class('wrapper', Wrapper)
+        self.decoder.register_class('wrapper', Wrapper)
+
+        # Data: Wrapper -> List -> [1, 2]
+        my_list = [1, 2]
+        wrap = Wrapper(items=my_list)
+        
+        graph = self.encoder.encode(wrap)
+        decoded = self.decoder.decode(graph)
+        
+        self.assertIsInstance(decoded, Wrapper)
+        self.assertEqual(decoded.items, [1, 2])
+        
+        # Verify it is actually a list shell that was filled
+        decoded.items.append(3)
+        self.assertEqual(decoded.items, [1, 2, 3])
+
+    def test_kitchen_sink_mixed_features(self):
+        """
+        1. Mix all supported features:
+           - Mutable Dataclass (KitchenSink, User)
+           - Frozen Dataclass as Dict Keys (GeoLoc)
+           - Tuples (Immutable sequence)
+           - Shared References (Diamond pattern: User in Tuple AND as primary_user)
+        """
+        enc = Encoder()
+        dec = Decoder()
+        classes_to_register = [User, GeoLoc, KitchenSink]
+        for cls in classes_to_register:
+            enc.register_class(cls.__name__.lower(), cls)
+            dec.register_class(cls.__name__.lower(), cls)
+
+        # Setup Data
+        u1 = User(name="Alice")
+        u2 = User(name="Bob")
+        loc_home = GeoLoc(0.0, 0.0)
+        
+        sink = KitchenSink(
+            tags=["a", "b"],
+            locations={loc_home: "Home"}, # Frozen Key
+            users=(u1, u2),               # Tuple
+            primary_user=u1               # Shared Reference (Cycle-ish)
+        )
+
+        # Execute
+        graph = enc.encode(sink)
+        decoded = dec.decode(graph)
+
+        # Assertions
+        self.assertIsInstance(decoded, KitchenSink)
+        self.assertEqual(decoded.tags, ["a", "b"])
+        # Check Frozen Dict Key
+        self.assertEqual(decoded.locations[GeoLoc(0.0, 0.0)], "Home")
+        # Check Tuple
+        self.assertIsInstance(decoded.users, tuple)
+        self.assertEqual(decoded.users[0].name, "Alice")
+        # Check Shared Identity
+        self.assertIs(decoded.primary_user, decoded.users[0], "Shared reference identity lost")
+
+    def test_compatible_decoder_setup(self):
+        """
+        2. Encode with Encoder A, Decode with DIFFERENT but COMPATIBLE Decoder B.
+        """
+        enc = Encoder()
+        dec = Decoder()
+        
+        # Both are configured identically
+        classes_to_register = [User, GeoLoc, KitchenSink]
+        for cls in classes_to_register:
+            enc.register_class(cls.__name__.lower(), cls)
+            dec.register_class(cls.__name__.lower(), cls)
+
+        data = User(name="CompatTest")
+        
+        graph = enc.encode(data)
+        result = dec.decode(graph)
+        
+        self.assertIsInstance(result, User)
+        self.assertEqual(result.name, "CompatTest")
+
+    def test_incompatible_decoder_setup(self):
+        """
+        3. Encode with configured Encoder, Decode with UNCONFIGURED Decoder.
+        Expect failure because Decoder doesn't know how to handle the "User" type.
+        """
+        enc = Encoder()
+        dec = Decoder() # We do NOT register handlers here
+        
+        classes_to_register = [User, GeoLoc, KitchenSink]
+        for cls in classes_to_register:
+            enc.register_class(cls.__name__.lower(), cls)
+        
+        data = User(name="FailTest")
+        graph = enc.encode(data)
+
+        # The graph contains nodes with metadata type="user".
+        # dec has no registry entry for "user".
+        # It should fail when trying to process the root node.
+        
+        with self.assertRaises(ValueError) as cm:
+            dec.decode(graph)
+        
+        self.assertIn("not found in map and no immutable handler registered", str(cm.exception))
+
+    def test_corrupt_graph_data(self):
+        """
+        4. Corrupt the graph by adding a random field edge to a strict node.
+        We use StrictConfig (with __slots__) to ensure it rejects unknown fields.
+        """
+        enc = Encoder()
+        dec = Decoder()
+        
+        classes_to_register = [StrictConfig]
+        for cls in classes_to_register:
+            enc.register_class(cls.__name__.lower(), cls)
+            dec.register_class(cls.__name__.lower(), cls)
+
+        # 1. Encode valid data
+        data = StrictConfig(version=1, debug=True)
+        graph = enc.encode(data)
+
+        # 2. Find the StrictConfig node
+        # It's the root, but let's be safe
+        root_id = [nid for nid, n in graph.nodes.items() if _type_of(n) == "strictconfig"][0]
+
+        # 3. Corrupt it: Add an edge representing a field that doesn't exist
+        # We need a target node for this field
+        fake_val_id = "bad_val_node"
+        graph.add_node(JgfNode(id=fake_val_id, label="bad", metadata={"value": "hacker"}))
+        
+        graph.add_edge(JgfEdge(
+            source=root_id,
+            target=fake_val_id,
+            relation="dataclass/field",
+            metadata={"name": "inject"} # <--- This field does not exist in __slots__
+        ))
+
+        # 4. Decode fails
+        with self.assertRaises(ValueError):
+            dec.decode(graph)
 
 if __name__ == '__main__':
     unittest.main()

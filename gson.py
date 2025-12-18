@@ -11,6 +11,7 @@ Serialization for Python Objects with Cycle Support.
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from typing import Any, Dict, Iterator, List, Callable, Type, Tuple
 from collections import defaultdict
@@ -73,7 +74,33 @@ class Encoder:
 
     def register(self, type_class: Type, handler: Callable[[Any, str, Encoder], None]):
         """Register a custom encoder for a specific type."""
+        if type_class in self._registry:
+            raise ValueError(f"Encoder for type {type_class.__name__} is already registered.")
         self._registry[type_class] = handler
+    
+    def register_class(self, type_name: str, cls: Type):
+        """
+        Dynamically registers encoder logic for the provided dataclasses.
+        """
+        def make_encoder(c, t_name):
+            def _encode_dc(obj, node_id, encoder):
+                # 1. Create Node
+                encoder.graph.add_node(JgfNode(
+                    id=node_id, 
+                    metadata={"type": t_name}
+                ))
+                # 2. Extract Fields
+                for field in dataclasses.fields(c):
+                    val = getattr(obj, field.name)
+                    target_id = encoder._process_node(val)
+                    encoder.graph.add_edge(JgfEdge(
+                        source=node_id,
+                        target=target_id,
+                        relation="dataclass/field",
+                        metadata={"name": field.name}
+                    ))
+            return _encode_dc
+        self.register(cls, make_encoder(cls, type_name))
 
     def encode(self, obj: Any) -> JgfGraph:
         """Main entry point."""
@@ -216,11 +243,11 @@ class Decoder:
 
             # Primitives are technically immutable but leaf nodes, so we map them directly
             None: (lambda n: _value_of(n), None),
-            # "int": (lambda n: _value_of(n), None),
-            # "float": (lambda n: _value_of(n), None),
-            # "str": (lambda n: _value_of(n), None),
-            # "bool": (lambda n: _value_of(n), None),
-            # "NoneType": (lambda n: None, None),
+            # "int": (lambda n: int(_value_of(n)), None),
+            # "float": (lambda n: float(_value_of(n)), None),
+            # "str": (lambda n: str(_value_of(n)), None),
+            # "bool": (lambda n: bool(_value_of(n)), None),
+            # "NoneType": (lambda _: None, None),
         }
 
         # Registry for Immutable Containers Types (Materialize Strategy)
@@ -238,13 +265,76 @@ class Decoder:
         For container types (e.g. a deque), both creator and filler should be provided.
         For leaf types, only creator is needed and filler can be None.
         """
+        if type_name in self._mutable_registry or type_name in self._immutable_registry:
+            raise ValueError(f"Cannot override existing type registration for '{type_name}'")
         self._mutable_registry[type_name] = (creator, filler)
 
     def register_immutable(self, type_name: str, materializer: Callable[[str, List[JgfEdge], Decoder], Any]):
         """
         Register a custom immutable container type (e.g. frozenset).
         """
+        if type_name in self._mutable_registry or type_name in self._immutable_registry:
+            raise ValueError(f"Cannot override existing type registration for '{type_name}'")
         self._immutable_registry[type_name] = materializer
+
+    def register_class(self, type_name: str, cls: type):
+        """
+        Dynamically registers decoder logic for the provided dataclass.
+        Handles both frozen (immutable) and non-frozen (mutable) dataclasses.
+        """
+        if not dataclasses.is_dataclass(cls):
+            raise ValueError(f"Provided class {cls.__name__} is not a dataclass.")
+        
+        is_frozen = cls.__dataclass_params__.frozen
+
+        if is_frozen:
+            def make_materializer(c: type) -> Callable[[str, List[JgfEdge], Decoder], Any]:
+                fields_set = {f.name for f in dataclasses.fields(c)}
+                def _materialize(node_id, edges, dec):
+                    # 1. Resolve children recursively
+                    kwargs = {}
+                    for edge in edges:
+                        if edge.relation == "dataclass/field":
+                            field_name = edge.metadata["name"]
+                            if field_name not in fields_set:
+                                raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
+                            kwargs[field_name] = dec._get_or_create(edge.target, dec.graph)
+                    
+                    # 2. Instantiate bypassing __init__ (safer for serialization)
+                    obj = object.__new__(c)
+                    for k, v in kwargs.items():
+                        object.__setattr__(obj, k, v)
+                    return obj
+                return _materialize
+
+            self.register_immutable(type_name, make_materializer(cls))
+        
+        else:
+            def make_creator(c: type) -> Callable[[JgfNode], Any]:
+                def _create_shell(node: JgfNode):
+                    # Bypass __init__
+                    o = object.__new__(c)
+                    for field in dataclasses.fields(c):
+                        # Initialize fields to None
+                        setattr(o, field.name, None)
+                    return o
+                return _create_shell
+            
+            def make_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
+                fields_set = {f.name for f in dataclasses.fields(c)}
+                def _fill_shell(obj: type, edges: list[JgfEdge], dec: Decoder):
+                    for edge in edges:
+                        if edge.relation == "dataclass/field":
+                            field_name = edge.metadata["name"]
+                            if field_name not in fields_set:
+                                raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
+                            val = dec._get_or_create(edge.target, dec.graph)
+                            setattr(obj, field_name, val)
+                return _fill_shell
+            
+            self.register(type_name, 
+                        make_creator(cls), 
+                        make_filler(cls))
 
     def decode(self, graph: JgfGraph) -> Any:
         self.graph = graph
@@ -375,7 +465,4 @@ class Decoder:
 if __name__ == "__main__":
     import sys, json
     from pprint import pprint
-    encoder = Encoder()
-    g = encoder.encode(json.load(sys.stdin))
-    dat = Jgf.to_json(g, validate=True)
-    pprint(dat)
+    pprint(Jgf.to_json(Encoder().encode(json.load(sys.stdin)), validate=True))
