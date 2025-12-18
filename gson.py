@@ -2,8 +2,6 @@
 Serialization for Python Objects with Cycle Support.
 """
 # TODOS:
-# - Do not store the index of dict keys/values, no I can;t because the index match each key/value pair together. 
-#   We could instead use a DictItem node that hase two edges, one to key and one to value...
 # - [DONE] Do not store the type of primitive types in metadata, rely simply json value.
 # - [DONE] Optimize the leaf primitive types so that several nodes refers to the same primitive value
 # - [DONE] Use several stegries to generete IDs based on provided Encoder argument, a simple counter would do probbaly.
@@ -82,31 +80,7 @@ class Encoder:
         """
         Dynamically registers encoder logic for the provided dataclasses.
         """
-        def make_encoder(c, t_name):
-            def _encode_dc(obj, node_id, encoder):
-                # 1. Create Node
-                encoder.graph.add_node(JgfNode(
-                    id=node_id, 
-                    metadata={"type": t_name}
-                ))
-                # 2. Extract Fields
-                for field in dataclasses.fields(c):
-                    val = getattr(obj, field.name)
-
-                    # Omit the field if it's the default value
-                    if (field.default != dataclasses.MISSING and val == field.default) or \
-                       (field.default_factory != dataclasses.MISSING and val == field.default_factory()):
-                        continue
-
-                    target_id = encoder._process_node(val)
-                    encoder.graph.add_edge(JgfEdge(
-                        source=node_id,
-                        target=target_id,
-                        relation="dataclass/field",
-                        metadata={"name": field.name}
-                    ))
-            return _encode_dc
-        self.register(cls, make_encoder(cls, type_name))
+        self.register(cls, _make_class_encoder(cls, type_name))
 
     def encode(self, obj: Any) -> JgfGraph:
         """Main entry point."""
@@ -204,7 +178,10 @@ def _type_of(node: JgfNode) -> str | None:
     """Helper to extract type from node metadata, 
     return None if the type should be the same as the value."""
     try:
-        return (node.metadata or {})["type"]
+        dat = (node.metadata or {})["type"]
+        if isinstance(dat, str):
+            return dat
+        raise TypeError(f"Node {node.id} has invalid 'type' metadata: {dat}")
     except KeyError:
         if _has_value(node):
             return None
@@ -220,9 +197,22 @@ def _value_of(node: JgfNode) -> Any:
 def _index_of(edge: JgfEdge) -> int:
     """Helper to extract index from edge metadata."""
     try:
-        return (edge.metadata or {})["index"]
+        index = (edge.metadata or {})["index"]
+        if isinstance(index, int):
+            return index
+        raise TypeError(f"Edge from {edge.source} to {edge.target} has invalid 'index' metadata: {index}")
     except KeyError:
         raise ValueError(f"Edge from {edge.source} to {edge.target} missing 'index' metadata.")
+
+def _name_of(edge: JgfEdge) -> str:
+    """Helper to extract name from edge metadata."""
+    try:
+        name = (edge.metadata or {})["name"]
+        if isinstance(name, str):
+            return name
+        raise TypeError(f"Edge from {edge.source} to {edge.target} has invalid 'name' metadata: {name}")
+    except KeyError:
+        raise ValueError(f"Edge from {edge.source} to {edge.target} missing 'name' metadata.")
 
 class Decoder:
     """
@@ -249,6 +239,8 @@ class Decoder:
 
             # Primitives are technically immutable but leaf nodes, so we map them directly
             None: (lambda n: _value_of(n), None),
+
+            # We don;t need to following items since the type is not stored for primitives.
             # "int": (lambda n: int(_value_of(n)), None),
             # "float": (lambda n: float(_value_of(n)), None),
             # "str": (lambda n: str(_value_of(n)), None),
@@ -258,8 +250,8 @@ class Decoder:
 
         # Registry for Immutable Containers Types (Materialize Strategy)
         # Type Name -> Materializer Function
-        # Signature: (node_id, edges, decoder_instance) -> immutable_obj
-        self._immutable_registry: Dict[str, Callable[[str, List[JgfEdge], Decoder], Any]] = {
+        # Signature: (edges, decoder_instance) -> immutable_obj
+        self._immutable_registry: Dict[str, Callable[[List[JgfEdge], Decoder], Any]] = {
             "tuple": self._materialize_tuple
         }
 
@@ -275,7 +267,7 @@ class Decoder:
             raise ValueError(f"Cannot override existing type registration for '{type_name}'")
         self._mutable_registry[type_name] = (creator, filler)
 
-    def register_immutable(self, type_name: str, materializer: Callable[[str, List[JgfEdge], Decoder], Any]):
+    def register_immutable(self, type_name: str, materializer: Callable[[List[JgfEdge], Decoder], Any]):
         """
         Register a custom immutable container type (e.g. frozenset).
         """
@@ -290,79 +282,12 @@ class Decoder:
         """
         if not dataclasses.is_dataclass(cls):
             raise ValueError(f"Provided class {cls.__name__} is not a dataclass.")
-        
-        is_frozen = cls.__dataclass_params__.frozen
+        is_frozen = cls.__dataclass_params__.frozen # type: ignore
 
         if is_frozen:
-            def make_materializer(c: type) -> Callable[[str, List[JgfEdge], Decoder], Any]:
-                fields_set = {f.name for f in dataclasses.fields(c)}
-                def _materialize(node_id, edges, dec):
-                    # 1. Resolve children recursively
-                    kwargs = {}
-                    for edge in edges:
-                        if edge.relation == "dataclass/field":
-                            field_name = edge.metadata["name"]
-                            if field_name not in fields_set:
-                                raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
-                            kwargs[field_name] = dec._get_or_create(edge.target, dec.graph)
-                    
-                    # Add omitted defaults
-                    for field in dataclasses.fields(c):
-                        if field.name not in kwargs:
-                            if field.default != dataclasses.MISSING:
-                                kwargs[field.name] = field.default
-                            elif field.default_factory != dataclasses.MISSING:  # type: ignore
-                                kwargs[field.name] = field.default_factory()  # type: ignore
-                            else:
-                                raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
-
-                    # 2. Instantiate bypassing __init__ (safer for serialization)
-                    obj = object.__new__(c)
-                    for k, v in kwargs.items():
-                        object.__setattr__(obj, k, v)
-                    return obj
-                return _materialize
-
-            self.register_immutable(type_name, make_materializer(cls))
-        
+            self.register_immutable(type_name, _make_materializer(cls))
         else:
-            def make_creator(c: type) -> Callable[[JgfNode], Any]:
-                def _create_shell(node: JgfNode):
-                    # Bypass __init__
-                    o = object.__new__(c)
-                    for field in dataclasses.fields(c):
-                        # Initialize fields to None
-                        setattr(o, field.name, None)
-                    return o
-                return _create_shell
-            
-            def make_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
-                fields_set = {f.name for f in dataclasses.fields(c)}
-                def _fill_shell(obj: type, edges: list[JgfEdge], dec: Decoder):
-                    seen_fields = set()
-                    for edge in edges:
-                        if edge.relation == "dataclass/field":
-                            field_name = edge.metadata["name"]
-                            if field_name not in fields_set:
-                                raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
-                            val = dec._get_or_create(edge.target, dec.graph)
-                            setattr(obj, field_name, val)
-                            seen_fields.add(field_name)
-
-                    # Add omitted defaults
-                    for field in dataclasses.fields(c):
-                        if field.name not in seen_fields:
-                            if field.default != dataclasses.MISSING:
-                                setattr(obj, field.name, field.default)
-                            elif field.default_factory != dataclasses.MISSING:  # type: ignore
-                                setattr(obj, field.name, field.default_factory())  # type: ignore
-                            else:
-                                raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
-                return _fill_shell
-            
-            self.register(type_name, 
-                        make_creator(cls), 
-                        make_filler(cls))
+            self.register(type_name, _make_creator(cls), _make_filler(cls))
 
     def decode(self, graph: JgfGraph) -> Any:
         self.graph = graph
@@ -418,7 +343,7 @@ class Decoder:
             edges = self.edges_by_source[node_id]
             
             # Materialize
-            obj = materializer(node_id, edges, self)
+            obj = materializer(edges, self)
             
             # Cache it (Memoization)
             self.object_map[node_id] = obj
@@ -478,17 +403,107 @@ class Decoder:
     # --- Built-in Materializers (Immutable) ---
 
     @staticmethod
-    def _materialize_tuple(node_id: str, edges: List[JgfEdge], decoder: Decoder) -> tuple:
+    def _materialize_tuple(edges: List[JgfEdge], decoder: Decoder) -> tuple:
         items = [e for e in edges if e.relation == "list/item"]
         items.sort(key=lambda e: _index_of(e))
-        
-        # Recursively resolve contents
-        resolved_items = [
+        return tuple(
             decoder._get_or_create(edge.target, decoder.graph) 
-            for edge in items
-        ]
+            for edge in items)
+
+##### Support for dataclasses #####
+
+def _make_class_encoder(c: type, t_name: str) -> Callable[[Any, str, Encoder], None]:
+    def _encode_dc(obj, node_id, encoder):
+        # 1. Create Node
+        encoder.graph.add_node(JgfNode(
+            id=node_id, 
+            metadata={"type": t_name}
+        ))
+        # 2. Extract Fields
+        for field in dataclasses.fields(c):
+            val = getattr(obj, field.name)
+
+            # Omit the field if it's the default value
+            if (field.default != dataclasses.MISSING and val == field.default) or \
+                (field.default_factory != dataclasses.MISSING and val == field.default_factory()):
+                continue
+
+            target_id = encoder._process_node(val)
+            encoder.graph.add_edge(JgfEdge(
+                source=node_id,
+                target=target_id,
+                relation="dataclass/field",
+                metadata={"name": field.name}
+            ))
+    return _encode_dc
+
+
+def _make_materializer(c: type) -> Callable[[List[JgfEdge], Decoder], Any]:
+    fields_list = dataclasses.fields(c)
+    fields_set = {f.name for f in fields_list}
+    def _materialize(edges: list[JgfEdge], dec: Decoder) -> Any:
+        # 1. Resolve children recursively
+        kwargs = {}
+        for edge in edges:
+            if edge.relation == "dataclass/field":
+                field_name = _name_of(edge)
+                if field_name not in fields_set:
+                    raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
+                kwargs[field_name] = dec._get_or_create(edge.target, dec.graph)
         
-        return tuple(resolved_items)
+        # Add omitted defaults
+        for field in fields_list:
+            if field.name not in kwargs:
+                if field.default != dataclasses.MISSING:
+                    kwargs[field.name] = field.default
+                elif field.default_factory != dataclasses.MISSING:  # type: ignore
+                    kwargs[field.name] = field.default_factory()  # type: ignore
+                else:
+                    raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
+
+        # 2. Instantiate bypassing __init__ (safer for serialization)
+        obj = object.__new__(c)
+        for k, v in kwargs.items():
+            object.__setattr__(obj, k, v)
+        return obj
+    return _materialize
+
+def _make_creator(c: type) -> Callable[[JgfNode], Any]:
+    fields_list = dataclasses.fields(c)
+    def _create_shell(node: JgfNode):
+        # Bypass __init__
+        o = object.__new__(c)
+        for field in fields_list:
+            # Initialize fields to None
+            setattr(o, field.name, None)
+        return o
+    return _create_shell
+
+def _make_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
+    fields_list = dataclasses.fields(c)
+    fields_set = {f.name for f in fields_list}
+    def _fill_shell(obj: type, edges: list[JgfEdge], dec: Decoder):
+        seen_fields = set()
+        for edge in edges:
+            if edge.relation == "dataclass/field":
+                field_name = _name_of(edge)
+                if field_name not in fields_set:
+                    raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
+                val = dec._get_or_create(edge.target, dec.graph)
+                setattr(obj, field_name, val)
+                seen_fields.add(field_name)
+
+        # Add omitted defaults
+        for field in fields_list:
+            if field.name not in seen_fields:
+                if field.default != dataclasses.MISSING:
+                    setattr(obj, field.name, field.default)
+                elif field.default_factory != dataclasses.MISSING:  # type: ignore
+                    setattr(obj, field.name, field.default_factory())  # type: ignore
+                else:
+                    raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
+
+    return _fill_shell
 
 if __name__ == "__main__":
     import sys, json

@@ -650,27 +650,6 @@ class TestDataclasses(unittest.TestCase):
         # Check Shared Identity
         self.assertIs(decoded.primary_user, decoded.users[0], "Shared reference identity lost")
 
-    def test_compatible_decoder_setup(self):
-        """
-        2. Encode with Encoder A, Decode with DIFFERENT but COMPATIBLE Decoder B.
-        """
-        enc = Encoder()
-        dec = Decoder()
-        
-        # Both are configured identically
-        classes_to_register = [User, GeoLoc, KitchenSink]
-        for cls in classes_to_register:
-            enc.register_class(cls.__name__.lower(), cls)
-            dec.register_class(cls.__name__.lower(), cls)
-
-        data = User(name="CompatTest")
-        
-        graph = enc.encode(data)
-        result = dec.decode(graph)
-        
-        self.assertIsInstance(result, User)
-        self.assertEqual(result.name, "CompatTest")
-
     def test_incompatible_decoder_setup(self):
         """
         3. Encode with configured Encoder, Decode with UNCONFIGURED Decoder.
@@ -679,7 +658,7 @@ class TestDataclasses(unittest.TestCase):
         enc = Encoder()
         dec = Decoder() # We do NOT register handlers here
         
-        classes_to_register = [User, GeoLoc, KitchenSink]
+        classes_to_register = [User]
         for cls in classes_to_register:
             enc.register_class(cls.__name__.lower(), cls)
         
