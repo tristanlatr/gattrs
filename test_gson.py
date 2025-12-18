@@ -245,7 +245,7 @@ class TestGJSON(unittest.TestCase):
 
 # Increase recursion limit for deep nesting tests
 import sys, time
-sys.setrecursionlimit(20000)
+sys.setrecursionlimit(0x110000)
 
 class TestPerformance(unittest.TestCase):
 
@@ -286,7 +286,7 @@ class TestPerformance(unittest.TestCase):
         # We will double the size (depth) in each step to see if time doubles (Linear)
         # or quadruples (Quadratic)
         base_width = 90
-        depths = [500, 1000, 2000, 4000] 
+        depths = [500, 1000, 2000, 4000, 0x110000/50] 
         
         results = []
 

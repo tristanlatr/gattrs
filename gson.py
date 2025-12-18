@@ -6,13 +6,13 @@ Serialization for Python Objects with Cycle Support.
 #   We could instead use a DictItem node that hase two edges, one to key and one to value...
 # - [DONE] Do not store the type of primitive types in metadata, rely simply json value.
 # - [DONE] Optimize the leaf primitive types so that several nodes refers to the same primitive value
-# - Use several stegries to generete IDs based on provided Encoder argument, a simple counter would do probbaly.
-
+# - [DONE] Use several stegries to generete IDs based on provided Encoder argument, a simple counter would do probbaly.
+    
 
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Callable, Type, Tuple
+from typing import Any, Dict, Iterator, List, Callable, Type, Tuple
 from collections import defaultdict
 
 from jgf import Jgf, JgfNode, JgfEdge, JgfGraph
@@ -21,6 +21,32 @@ def _is_primitive(obj: Any) -> bool:
     """Check if the object is an immutable primitive type."""
     return isinstance(obj, (str, int, float, bool, type(None))) 
 
+def _gen_uuid() -> Iterator[str]:
+    """Generate unique random identifier."""
+    while True:
+        yield str(uuid.uuid4())
+
+def _gen_inc() -> Iterator[str]:
+    """Generate incrementing identifier based on char(), using more digits when needed."""
+    i = 1
+    # The limit is the max unicode code point (0x10ffff) + 1 for the zero-th index.
+    base = 0x110000 
+    
+    while True:
+        # Convert integer 'i' to a "base-1114112" string
+        temp_i = i
+        digits = []
+        
+        while True:
+            temp_i, remainder = divmod(temp_i, base)
+            digits.append(chr(remainder))
+            if temp_i == 0:
+                break
+        
+        # digits are collected in reverse order (least significant first)
+        yield "".join(reversed(digits))
+        i += 1
+
 class Encoder:
     """
     Encodes Python objects into a JGF Graph with support for cyclical references.
@@ -28,7 +54,7 @@ class Encoder:
     visited: Dict[int, str]  # Map id(obj) -> node_id
     graph: JgfGraph
     
-    def __init__(self):
+    def __init__(self, id_generator: Callable[[], Iterator[str]] = _gen_inc):
         
         # Registry: Type -> Encoder Function
         # Signature: (obj, node_id) -> None
@@ -42,6 +68,8 @@ class Encoder:
             tuple: self._encode_tuple,  # Built-in Tuple support
             dict: self._encode_dict,
         }
+
+        self._id_generator = id_generator()
 
     def register(self, type_class: Type, handler: Callable[[Any, str, Encoder], None]):
         """Register a custom encoder for a specific type."""
@@ -69,7 +97,7 @@ class Encoder:
             return self.visited[obj_id]
 
         # 2. Generate ID and mark visited
-        node_id = str(uuid.uuid4())
+        node_id = next(self._id_generator)
         self.visited[obj_id] = node_id
 
         # 3. Dispatch to specific handler
