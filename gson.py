@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Dict, List, Callable, Type, Tuple
 from collections import defaultdict
 
-from jgf import JgfNode, JgfEdge, JgfGraph
+from jgf import Jgf, JgfNode, JgfEdge, JgfGraph
 
 class Encoder:
     """
@@ -323,3 +323,11 @@ class Decoder:
         ]
         
         return tuple(resolved_items)
+
+if __name__ == "__main__":
+    import sys, json
+    from pprint import pprint
+    encoder = Encoder()
+    g = encoder.encode(json.load(sys.stdin))
+    dat = Jgf.to_json(g, validate=True)
+    pprint(dat)
