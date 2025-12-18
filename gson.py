@@ -76,19 +76,18 @@ class Encoder:
 
     @staticmethod
     def _encode_primitive(obj: Any, node_id: str, encoder: Encoder):
-        label = "null" if obj is None else str(obj)
         # We store the specific type name to help the decoder
         meta = {"type": type(obj).__name__, "value": obj}
-        encoder.graph.add_node(JgfNode(id=node_id, label=label, metadata=meta))
+        encoder.graph.add_node(JgfNode(id=node_id, metadata=meta))
 
     @staticmethod
     def _encode_list(obj: List, node_id: str, encoder: Encoder):
-        encoder.graph.add_node(JgfNode(id=node_id, label="list", metadata={"type": "list"}))
+        encoder.graph.add_node(JgfNode(id=node_id, metadata={"type": "list"}))
         encoder._encode_sequence_items(obj, node_id, encoder)
 
     @staticmethod
     def _encode_tuple(obj: Tuple, node_id: str, encoder: Encoder):
-        encoder.graph.add_node(JgfNode(id=node_id, label="tuple", metadata={"type": "tuple"}))
+        encoder.graph.add_node(JgfNode(id=node_id, metadata={"type": "tuple"}))
         encoder._encode_sequence_items(obj, node_id, encoder)    
 
     @staticmethod
@@ -106,7 +105,7 @@ class Encoder:
 
     @staticmethod
     def _encode_dict(obj: Dict, node_id: str, encoder: Encoder):
-        encoder.graph.add_node(JgfNode(id=node_id, label="dict", metadata={"type": "dict"}))
+        encoder.graph.add_node(JgfNode(id=node_id, metadata={"type": "dict"}))
         
         # Enumerate to give edges a stable index pairs
         for i, (key, value) in enumerate(obj.items()):
