@@ -487,12 +487,13 @@ class Jgf:
         all_graphs_json['graphs'].append(single_graph_json)
 
     @staticmethod
-    def _remove_null_values(data: Any) -> Any:
+    def _remove_null_values(data: Any, _key:object=object()) -> Any:
         if isinstance(data, dict):
             return {
-                k: Jgf._remove_null_values(v) 
+                k: Jgf._remove_null_values(v, k)  if _key != 'metadata' else v
                 for k, v in data.items() 
-                if v is not None
+                # Metadata is special cased because it can actually contain None values
+                if v is not None or _key == 'metadata'
             }
         elif isinstance(data, list):
             return [Jgf._remove_null_values(v) for v in data]

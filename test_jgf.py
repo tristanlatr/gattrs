@@ -612,7 +612,7 @@ class TestGraph(unittest.TestCase):
         self.assertEqual(dims['nodes'], 2)
         self.assertEqual(dims['edges'], 1)
 
-class TestJsonDecorator(unittest.TestCase):
+class TestJson(unittest.TestCase):
     maxDiff = None
 
     # describe('#to json')
@@ -650,7 +650,7 @@ class TestJsonDecorator(unittest.TestCase):
         graph = JgfGraph('someType', 'someLabel', True, {'bla': 'some-meta-data'})
 
         graph.add_node(JgfNode('firstNodeId', 'blubb-label', {'bla': 'whoopp'}))
-        graph.add_node(JgfNode('secondNodeId', 'bla-label', {'bli': 'whaaat'}))
+        graph.add_node(JgfNode('secondNodeId', 'bla-label', {'bli': 'whaaat', 2: None, None: 3, None: None}))
 
         graph.add_edge(JgfEdge('firstNodeId', 'secondNodeId', 'is-test-edge'))
 
@@ -662,7 +662,7 @@ class TestJsonDecorator(unittest.TestCase):
                 'metadata': {'bla': 'some-meta-data'},
                 'nodes': {
                     'firstNodeId': {'label': 'blubb-label', 'metadata': {'bla': 'whoopp'}},
-                    'secondNodeId': {'label': 'bla-label', 'metadata': {'bli': 'whaaat'}},
+                    'secondNodeId': {'label': 'bla-label', 'metadata': {'bli': 'whaaat', 2: None, None: 3, None: None}},
                 },
                 'edges': [
                     {
