@@ -289,6 +289,11 @@ class TestNode(unittest.TestCase):
         for invalid_metadata in invalid_metadata_list:
             with self.assertRaises(ValueError):
                 node.metadata = invalid_metadata
+    
+    def test_node_label_is_not_required(self):
+        node = JgfNode('unique-node-id')
+        self.assertEqual(node.id, 'unique-node-id')
+        self.assertIsNone(node.label)
 
 from unittest.mock import patch
 

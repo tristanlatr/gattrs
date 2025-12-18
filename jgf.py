@@ -180,7 +180,9 @@ class JgfNode:
     In graph theory, nodes are also called points or vertices.
     """
 
-    def __init__(self, id: str, label: str, metadata: Optional[Dict[str, Any]] = None):
+    def __init__(self, id: str, 
+                 label: str | None = None, 
+                 metadata: Optional[Dict[str, Any]] = None):
         """
         Constructor.
         
