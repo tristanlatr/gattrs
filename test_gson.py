@@ -42,6 +42,11 @@ class TestGJSON(unittest.TestCase):
         decoded_dict = self.decoder.decode(graph_dict)
         self.assertEqual(original_dict, decoded_dict)
 
+        original_dict = {None: None, "b": None, 3: None}
+        graph_dict = self.encoder.encode(original_dict)
+        decoded_dict = self.decoder.decode(graph_dict)
+        self.assertEqual(repr(original_dict), repr(decoded_dict))
+
     def test_nested_structures(self):
         """Test a mix of lists and dicts."""
         data = {
