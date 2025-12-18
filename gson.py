@@ -274,7 +274,7 @@ class Decoder:
         # Pass 2: Fill Mutable Contents
         # Immutable types are not filled here; they are created on-demand when referenced.
         for node_id, node in graph.nodes.items():
-            self._fill_mutable_content(node_id, node, graph)
+            self._fill_mutable_content(node_id, node)
 
         # Finally, return the root. 
         # If the root is immutable (e.g. the whole data is just one tuple), 
@@ -309,7 +309,7 @@ class Decoder:
         # Should not happen if graph is valid
         raise ValueError(f"Node {node_id} (type: {type_name}) not found in map and no immutable handler registered.")
 
-    def _fill_mutable_content(self, node_id: str, node: JgfNode, graph: JgfGraph):
+    def _fill_mutable_content(self, node_id: str, node: JgfNode):
         type_name = _type_of(node)
         
         if type_name not in self._mutable_registry:
