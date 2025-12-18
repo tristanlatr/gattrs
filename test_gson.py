@@ -111,7 +111,7 @@ class TestGJSON(unittest.TestCase):
         # 1. Define Custom Handler for Encoder
         def encode_dt(obj, node_id, encoder):
             meta = {"type": "datetime", "value": obj.timestamp()}
-            encoder.graph.add_node(JgfNode(id=node_id, label=str(obj), metadata=meta))
+            encoder.graph.add_node(JgfNode(id=node_id, metadata=meta))
 
         # 2. Define Custom Handlers for Decoder
         def create_dt(node):
@@ -231,6 +231,17 @@ class TestGJSON(unittest.TestCase):
         self.assertIsInstance(reconstructed_key, tuple)          # Outer
         self.assertIsInstance(reconstructed_key[0], tuple)       # Inner
         self.assertEqual(reconstructed_key[0][1], 20)
+    
+    def primitive_types_are_encoded_optimally(self):
+        """
+        Primitive types should be encoded as leaf nodes without a type and several edges might refer to them
+        """
+        data = [20, 20, 20, 20, 20]  # Same integer multiple times
+        graph = self.encoder.encode(data)
+        # There should be only one node for the integer 20
+        value_nodes = [node for node in graph.nodes.values() if node.metadata.get("value") == 20]
+        self.assertEqual(len(value_nodes), 1, "Primitive value encoded multiple times instead of reusing the same node.")
+
 
 # Increase recursion limit for deep nesting tests
 import sys, time
@@ -351,7 +362,6 @@ class TestUnsupportedAndInvalid(unittest.TestCase):
         graph = JgfGraph()
         graph.add_node(JgfNode(
             id="n1", 
-            label="?", 
             metadata={"type": "UnknownAlien", "value": "check"}
         ))
         
@@ -365,7 +375,7 @@ class TestUnsupportedAndInvalid(unittest.TestCase):
         """
         graph = JgfGraph()
         # Node missing "type" in metadata
-        graph.add_node(JgfNode(id="n1", label="broken", metadata={"some_other_key": 1}))
+        graph.add_node(JgfNode(id="n1", metadata={"some_other_key": 1}))
         
         with self.assertRaises(ValueError):
             self.decoder.decode(graph)
@@ -379,7 +389,7 @@ class TestUnsupportedAndInvalid(unittest.TestCase):
         trying to build the child before the parent.
         """
         graph = JgfGraph()
-        graph.add_node(JgfNode(id="t1", label="tuple", metadata={"type": "tuple"}))
+        graph.add_node(JgfNode(id="t1", metadata={"type": "tuple"}))
         # Edge pointing back to itself
         graph.add_edge(JgfEdge(source="t1", target="t1", relation="list/item", metadata={"index": 0}))
 
@@ -397,17 +407,17 @@ class TestUnsupportedAndInvalid(unittest.TestCase):
         graph = JgfGraph()
         
         # Nodes
-        graph.add_node(JgfNode(id="dict1", label="dict", metadata={"type": "dict"}))
-        graph.add_node(JgfNode(id="tuple1", label="tuple", metadata={"type": "tuple"}))
-        graph.add_node(JgfNode(id="list1", label="list", metadata={"type": "list"}))
-        
+        graph.add_node(JgfNode(id="dict1", metadata={"type": "dict"}))
+        graph.add_node(JgfNode(id="tuple1", metadata={"type": "tuple"}))
+        graph.add_node(JgfNode(id="list1", metadata={"type": "list"}))
+
         # Edges
         # Tuple contains List
         graph.add_edge(JgfEdge(source="tuple1", target="list1", relation="list/item", metadata={"index": 0}))
         # Dict uses Tuple as Key
         graph.add_edge(JgfEdge(source="dict1", target="tuple1", relation="dict/key", metadata={"index": 0}))
         # Dict uses "val" as Value
-        val_node = JgfNode(id="v1", label="val", metadata={"type": "str", "value": "val"})
+        val_node = JgfNode(id="v1", metadata={"value": "val"})
         graph.add_node(val_node)
         graph.add_edge(JgfEdge(source="dict1", target="v1", relation="dict/value", metadata={"index": 0}))
 
@@ -421,8 +431,8 @@ class TestUnsupportedAndInvalid(unittest.TestCase):
         Expected: ValueError during decode traversal.
         """
         graph = JgfGraph()
-        graph.add_node(JgfNode(id="list1", label="list", metadata={"type": "list"}))
-        graph.add_node(JgfNode(id="ghost_node", label="list", metadata={"type": "list"}))
+        graph.add_node(JgfNode(id="list1", metadata={"type": "list"}))
+        graph.add_node(JgfNode(id="ghost_node", metadata={"type": "list"}))
         graph.add_edge(JgfEdge(source="list1", target="ghost_node", relation="list/item", metadata={"index": 0}))
         graph.remove_node("ghost_node")  # Simulate corruption by removing the target node
 

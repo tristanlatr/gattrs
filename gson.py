@@ -1,6 +1,14 @@
 """
 Serialization for Python Objects with Cycle Support.
 """
+# TODOS:
+# - Do not store the index of dict keys/values, no I can;t because the index match each key/value pair together. 
+#   We could instead use a DictItem node that hase two edges, one to key and one to value...
+# - [DONE] Do not store the type of primitive types in metadata, rely simply json value.
+# - [DONE] Optimize the leaf primitive types so that several nodes refers to the same primitive value
+# - Use several stegries to generete IDs based on provided Encoder argument, a simple counter would do probbaly.
+
+
 from __future__ import annotations
 
 import uuid
@@ -8,6 +16,10 @@ from typing import Any, Dict, List, Callable, Type, Tuple
 from collections import defaultdict
 
 from jgf import Jgf, JgfNode, JgfEdge, JgfGraph
+
+def _is_primitive(obj: Any) -> bool:
+    """Check if the object is an immutable primitive type."""
+    return isinstance(obj, (str, int, float, bool, type(None))) 
 
 class Encoder:
     """
@@ -50,7 +62,7 @@ class Encoder:
         Recursive function to handle object identity and dispatch encoding.
         Returns the node_id.
         """
-        obj_id = id(obj)
+        obj_id = id(obj) if not _is_primitive(obj) else hash(obj)
         
         # 1. Check Identity (Cycle detection)
         if obj_id in self.visited:
@@ -76,8 +88,7 @@ class Encoder:
 
     @staticmethod
     def _encode_primitive(obj: Any, node_id: str, encoder: Encoder):
-        # We store the specific type name to help the decoder
-        meta = {"type": type(obj).__name__, "value": obj}
+        meta = {"value": obj}
         encoder.graph.add_node(JgfNode(id=node_id, metadata=meta))
 
     @staticmethod
@@ -124,11 +135,18 @@ class Encoder:
                 relation="dict/value", metadata={"index": i}
             ))
 
-def _type_of(node: JgfNode) -> str:
-    """Helper to extract type from node metadata."""
+def _has_value(node: JgfNode) -> bool:
+    """Helper to check if node metadata has a 'value' field."""
+    return "value" in (node.metadata or {})
+
+def _type_of(node: JgfNode) -> str | None:
+    """Helper to extract type from node metadata, 
+    return None if the type should be the same as the value."""
     try:
         return (node.metadata or {})["type"]
     except KeyError:
+        if _has_value(node):
+            return None
         raise ValueError(f"Node {node.id} missing 'type' metadata.")    
 
 def _value_of(node: JgfNode) -> Any:
@@ -164,16 +182,17 @@ class Decoder:
         
         # Registry for Mutable Types (Shell Strategy)
         # Type Name -> (Shell Creator, Content Filler)
-        self._mutable_registry: Dict[str, Tuple[Callable[[JgfNode], Any], Callable[[Any, List[JgfEdge], Decoder], None] | None]] = {
+        self._mutable_registry: Dict[str | None, Tuple[Callable[[JgfNode], Any], Callable[[Any, List[JgfEdge], Decoder], None] | None]] = {
             "list": (lambda n: [], self._fill_list),
             "dict": (lambda n: {}, self._fill_dict),
 
             # Primitives are technically immutable but leaf nodes, so we map them directly
-            "int": (lambda n: _value_of(n), None),
-            "float": (lambda n: _value_of(n), None),
-            "str": (lambda n: _value_of(n), None),
-            "bool": (lambda n: _value_of(n), None),
-            "NoneType": (lambda n: None, None),
+            None: (lambda n: _value_of(n), None),
+            # "int": (lambda n: _value_of(n), None),
+            # "float": (lambda n: _value_of(n), None),
+            # "str": (lambda n: _value_of(n), None),
+            # "bool": (lambda n: _value_of(n), None),
+            # "NoneType": (lambda n: None, None),
         }
 
         # Registry for Immutable Containers Types (Materialize Strategy)
@@ -216,7 +235,7 @@ class Decoder:
         root_id = list(graph.nodes.keys())[0]
 
         # Pass 1: Instantiate Mutable Shells ONLY
-        # We consciously skip Immutable types here.
+        # We consciously skip Immutable container types here.
         for node_id, node in graph.nodes.items():
             type_name = _type_of(node)
             
@@ -266,11 +285,13 @@ class Decoder:
         type_name = _type_of(node)
         
         if type_name not in self._mutable_registry:
-            return # an immutable type
+            return # an immutable container type
 
         _, filler = self._mutable_registry[type_name]
         if filler is None:
             return  # No filler defined (e.g., for leaf objects)
+            # we could check if type_name is None upthere but whatever this does.
+
         obj = self.object_map[node_id]
         edges = self.edges_by_source[node_id]
         
