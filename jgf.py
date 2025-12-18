@@ -1,7 +1,7 @@
 """
 A SUBSET OF JSON Graph Format (JGF) V2 https://jsongraphformat.info/
 
-The schema is simplified and adapted for serializing Python objects
+The schema is simplified and adapted for serializing Python objects, but still complies with the upstream JSON schema.
 """
 
 # TODOS: 
