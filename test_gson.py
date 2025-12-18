@@ -731,6 +731,114 @@ class TestDataclasses(unittest.TestCase):
         # 4. Decode fails
         with self.assertRaises(ValueError):
             dec.decode(graph)
+    
+    def test_mutable_dataclass_defaults(self):
+        """
+        Scenario: Mutable Dataclass with default values.
+        Verify:
+        1. Encoded graph has NO edges for default fields.
+        2. Decoded object has the default values restored correctly.
+        """
+        
+        @dataclasses.dataclass
+        class Config:
+            host: str = "localhost"
+            port: int = 8080
+            tags: list[str] = dataclasses.field(default_factory=list)
+
+        self.encoder.register_class("config", Config)
+        self.decoder.register_class("config", Config)
+
+        # Case A: Fully Default Object
+        default_obj = Config()
+        graph_a = self.encoder.encode(default_obj)
+        
+        # Verify Optimization: Should have 0 edges (all dropped)
+        # We find the node for Config
+        config_node = [n for n in graph_a.nodes.values() if _type_of(n) == "config"][0]
+        edges_from_config = [e for e in graph_a.edges if e.source == config_node.id]
+        self.assertEqual(len(edges_from_config), 0, "Defaults were not dropped!")
+
+        # Verify Roundtrip
+        decoded_a = self.decoder.decode(graph_a)
+        self.assertEqual(decoded_a, default_obj)
+        self.assertEqual(decoded_a.tags, []) # Factory worked
+
+        # Case B: Partial Override
+        custom_obj = Config(port=9090, tags=["prod"])
+        graph_b = self.encoder.encode(custom_obj)
+        
+        # Verify Optimization: 'host' is default, so it should drop. 'port' and 'tags' exist.
+        config_node_b = [n for n in graph_b.nodes.values() if _type_of(n) == "config"][0]
+        edges_b = [e for e in graph_b.edges if e.source == config_node_b.id]
+        
+        field_names = sorted([e.metadata["name"] for e in edges_b])
+        self.assertEqual(field_names, ["port", "tags"]) # 'host' is missing
+        
+        # Verify Roundtrip
+        decoded_b = self.decoder.decode(graph_b)
+        self.assertEqual(decoded_b, custom_obj)
+        self.assertEqual(decoded_b.host, "localhost") # Restored
+
+    def test_frozen_dataclass_defaults(self):
+        """
+        Scenario: Frozen Dataclass with default values.
+        Verify: Materializer logic restores defaults correctly during __new__.
+        """
+        
+        @dataclasses.dataclass(frozen=True)
+        class Vector:
+            x: int = 0
+            y: int = 0
+            z: int = 0
+
+        self.encoder.register_class("vector", Vector)
+        self.decoder.register_class("vector", Vector)
+
+        # Case A: Only Z is modified
+        v = Vector(z=5) # x=0, y=0 (defaults)
+        
+        graph = self.encoder.encode(v)
+        
+        # Verify Optimization
+        root_node = [n for n in graph.nodes.values() if _type_of(n) == "vector"][0]
+        edges = [e for e in graph.edges if e.source == root_node.id]
+        
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0].metadata["name"], "z")
+        
+        # Verify Roundtrip
+        decoded_v = self.decoder.decode(graph)
+        self.assertEqual(decoded_v, v)
+        self.assertEqual(decoded_v.x, 0) # Restored
+
+    def test_factory_equality_check(self):
+        """
+        Scenario: Default factory producing a complex empty structure (dict).
+        Verify: Empty dicts are dropped, filled dicts are kept.
+        """
+        
+        @dataclasses.dataclass
+        class Cache:
+            data: dict[str, str] = dataclasses.field(default_factory=dict)
+
+        self.encoder.register_class("cache", Cache)
+        self.decoder.register_class("cache", Cache)
+
+        # 1. Empty (Default)
+        c1 = Cache()
+        graph1 = self.encoder.encode(c1)
+        self.assertEqual(len(graph1.edges), 0) # Dropped
+        self.assertEqual(self.decoder.decode(graph1), c1)
+
+        # 2. Filled (Non-Default)
+        c2 = Cache(data={"key": "val"})
+        graph2 = self.encoder.encode(c2)
+        
+        # Should have edge for 'data' -> dict node -> key/val edges
+        edges2 = [e for e in graph2.edges if e.relation == "dataclass/field"]
+        self.assertEqual(len(edges2), 1)
+        self.assertEqual(self.decoder.decode(graph2), c2)
 
 if __name__ == '__main__':
     unittest.main()

@@ -31,7 +31,7 @@ def _gen_inc() -> Iterator[str]:
     """Generate incrementing identifier based on char(), using more digits when needed."""
     i = 1
     # The limit is the max unicode code point (0x10ffff) + 1 for the zero-th index.
-    base = 0x110000 
+    base = 255
     
     while True:
         # Convert integer 'i' to a "base-1114112" string
@@ -92,6 +92,12 @@ class Encoder:
                 # 2. Extract Fields
                 for field in dataclasses.fields(c):
                     val = getattr(obj, field.name)
+
+                    # Omit the field if it's the default value
+                    if (field.default != dataclasses.MISSING and val == field.default) or \
+                       (field.default_factory != dataclasses.MISSING and val == field.default_factory()):
+                        continue
+
                     target_id = encoder._process_node(val)
                     encoder.graph.add_edge(JgfEdge(
                         source=node_id,
@@ -300,6 +306,16 @@ class Decoder:
                                 raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
                             kwargs[field_name] = dec._get_or_create(edge.target, dec.graph)
                     
+                    # Add omitted defaults
+                    for field in dataclasses.fields(c):
+                        if field.name not in kwargs:
+                            if field.default != dataclasses.MISSING:
+                                kwargs[field.name] = field.default
+                            elif field.default_factory != dataclasses.MISSING:  # type: ignore
+                                kwargs[field.name] = field.default_factory()  # type: ignore
+                            else:
+                                raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
+
                     # 2. Instantiate bypassing __init__ (safer for serialization)
                     obj = object.__new__(c)
                     for k, v in kwargs.items():
@@ -323,6 +339,7 @@ class Decoder:
             def make_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
                 fields_set = {f.name for f in dataclasses.fields(c)}
                 def _fill_shell(obj: type, edges: list[JgfEdge], dec: Decoder):
+                    seen_fields = set()
                     for edge in edges:
                         if edge.relation == "dataclass/field":
                             field_name = edge.metadata["name"]
@@ -330,6 +347,17 @@ class Decoder:
                                 raise ValueError(f"Field '{field_name}' not found in dataclass '{c.__name__}'")
                             val = dec._get_or_create(edge.target, dec.graph)
                             setattr(obj, field_name, val)
+                            seen_fields.add(field_name)
+
+                    # Add omitted defaults
+                    for field in dataclasses.fields(c):
+                        if field.name not in seen_fields:
+                            if field.default != dataclasses.MISSING:
+                                setattr(obj, field.name, field.default)
+                            elif field.default_factory != dataclasses.MISSING:  # type: ignore
+                                setattr(obj, field.name, field.default_factory())  # type: ignore
+                            else:
+                                raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
                 return _fill_shell
             
             self.register(type_name, 
