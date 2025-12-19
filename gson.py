@@ -10,6 +10,7 @@ Serialization for Python Objects with Cycle Support.
 from __future__ import annotations
 
 import dataclasses
+import enum
 import uuid
 from typing import Any, Dict, Iterator, List, Callable, Type, Tuple
 from collections import defaultdict
@@ -80,7 +81,14 @@ class Encoder:
         """
         Dynamically registers encoder logic for the provided dataclasses.
         """
-        self.register(cls, _make_class_encoder(cls, type_name))
+        if dataclasses.is_dataclass(cls):
+            self.register(cls, _make_dataclass_encoder(cls, type_name))
+        elif issubclass(cls, enum.Flag):
+            self.register(cls, _make_enum_encoder(cls, type_name, as_name=False))
+        elif issubclass(cls, enum.Enum):
+            self.register(cls, _make_enum_encoder(cls, type_name))
+        else:
+            raise TypeError(f"Provided class {cls.__name__} is not a supported class.")
 
     def encode(self, obj: Any) -> JgfGraph:
         """Main entry point."""
@@ -169,6 +177,8 @@ class Encoder:
                 source=node_id, target=val_id, 
                 relation="dict/value", metadata={"index": i}
             ))
+
+# Metadata accessors
 
 def _has_value(node: JgfNode) -> bool:
     """Helper to check if node metadata has a 'value' field."""
@@ -280,15 +290,20 @@ class Decoder:
         Dynamically registers decoder logic for the provided dataclass.
         Handles both frozen (immutable) and non-frozen (mutable) dataclasses.
         """
-        if not dataclasses.is_dataclass(cls):
-            raise ValueError(f"Provided class {cls.__name__} is not a dataclass.")
-        is_frozen = cls.__dataclass_params__.frozen # type: ignore
+        if dataclasses.is_dataclass(cls):
+            is_frozen = cls.__dataclass_params__.frozen # type: ignore
 
-        if is_frozen:
-            self.register_immutable(type_name, _make_materializer(cls))
+            if is_frozen:
+                self.register_immutable(type_name, _make_frozen_dataclass_materializer(cls))
+            else:
+                self.register(type_name, _make_dataclass_creator(cls), _make_dataclass_filler(cls))
+        elif issubclass(cls, enum.Flag):
+            self.register(type_name, _make_enum_creator(cls, as_name=False))
+        elif issubclass(cls, enum.Enum):
+            self.register(type_name, _make_enum_creator(cls), None)
         else:
-            self.register(type_name, _make_creator(cls), _make_filler(cls))
-
+            raise TypeError(f"Provided class {cls.__name__} is not a supported class.")
+    
     def decode(self, graph: JgfGraph) -> Any:
         self.graph = graph
         self.object_map = {}
@@ -410,9 +425,38 @@ class Decoder:
             decoder._get_or_create(edge.target, decoder.graph) 
             for edge in items)
 
+##### Support for Enums #####
+
+def _make_enum_encoder(c: Type, t_name: str, as_name:bool=True) -> Callable[[Any, str, Encoder], None]:
+    # If it's not as name, it will be as value.
+    def _encode_enum(obj: enum.Enum, node_id, encoder):
+        encoder.graph.add_node(JgfNode(
+            id=node_id, 
+            metadata={
+                "type": t_name,
+                "value": obj.name if as_name else obj.value
+            }
+        ))
+    return _encode_enum
+
+def _make_enum_creator(c: enum.EnumMeta, as_name:bool=True) -> Callable[[JgfNode], Any]:
+    def _create_enum(node: JgfNode):
+        dat = _value_of(node)
+        if as_name:
+            try:
+                return c[dat]
+            except KeyError:
+                raise ValueError(f"Enum '{c.__name__}' has no member named '{dat}'")
+        else:
+            try:
+                return c(dat)
+            except ValueError:
+                raise
+    return _create_enum
+
 ##### Support for dataclasses #####
 
-def _make_class_encoder(c: type, t_name: str) -> Callable[[Any, str, Encoder], None]:
+def _make_dataclass_encoder(c: type, t_name: str) -> Callable[[Any, str, Encoder], None]:
     def _encode_dc(obj, node_id, encoder):
         # 1. Create Node
         encoder.graph.add_node(JgfNode(
@@ -437,8 +481,7 @@ def _make_class_encoder(c: type, t_name: str) -> Callable[[Any, str, Encoder], N
             ))
     return _encode_dc
 
-
-def _make_materializer(c: type) -> Callable[[List[JgfEdge], Decoder], Any]:
+def _make_frozen_dataclass_materializer(c: type) -> Callable[[List[JgfEdge], Decoder], Any]:
     fields_list = dataclasses.fields(c)
     fields_set = {f.name for f in fields_list}
     def _materialize(edges: list[JgfEdge], dec: Decoder) -> Any:
@@ -469,11 +512,11 @@ def _make_materializer(c: type) -> Callable[[List[JgfEdge], Decoder], Any]:
         # Call __post_init__ if exists
         if callable(post_init:=getattr(obj, "__post_init__", None)):
             post_init()
-            
+
         return obj
     return _materialize
 
-def _make_creator(c: type) -> Callable[[JgfNode], Any]:
+def _make_dataclass_creator(c: type) -> Callable[[JgfNode], Any]:
     fields_list = dataclasses.fields(c)
     def _create_shell(node: JgfNode):
         # Bypass __init__
@@ -484,7 +527,7 @@ def _make_creator(c: type) -> Callable[[JgfNode], Any]:
         return o
     return _create_shell
 
-def _make_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
+def _make_dataclass_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
     fields_list = dataclasses.fields(c)
     fields_set = {f.name for f in fields_list}
     def _fill_shell(obj: type, edges: list[JgfEdge], dec: Decoder):

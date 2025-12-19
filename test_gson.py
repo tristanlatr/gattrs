@@ -878,5 +878,193 @@ class TestDataclasses(unittest.TestCase):
         
         self.assertEqual(str(cm.exception), "Balance cannot be negative")
 
+# --- 1. Define Sample Enums ---
+
+import enum
+
+class Color(enum.Enum):
+    RED = 1
+    GREEN = 2
+    BLUE = 3
+
+class Status(enum.IntEnum):
+    """IntEnum members compare equal to integers"""
+    INACTIVE = 0
+    ACTIVE = 1
+
+class Access(enum.Flag):
+    """Flag allows bitwise combinations"""
+    READ = enum.auto()
+    WRITE = enum.auto()
+    EXECUTE = enum.auto()
+    RW = READ | WRITE
+
+class TestEnums(unittest.TestCase):
+    
+    def setUp(self):
+        self.encoder = Encoder()
+        self.decoder = Decoder()
+        for typ in [Color, Status, Access]:
+            self.encoder.register_class(typ.__name__.lower(), typ)
+            self.decoder.register_class(typ.__name__.lower(), typ)
+
+    def test_simple_enum_identity(self):
+        """
+        Scenario: Encoding a standard Enum member.
+        Verify: The decoded object IS the exact same singleton instance.
+        """
+        original = Color.RED
+        graph = self.encoder.encode(original)
+        decoded = self.decoder.decode(graph)
+
+        self.assertIsInstance(decoded, Color)
+        self.assertEqual(decoded, Color.RED)
+        self.assertIs(decoded, Color.RED) # Singleton Identity check
+
+    def test_enum_auto_values(self):
+        """
+        Scenario: Enum using enum.auto().
+        Verify: Works correctly because we serialize by NAME, not value.
+        """
+        # Access.READ was created via auto()
+        original = Access.READ
+        graph = self.encoder.encode(original)
+        decoded = self.decoder.decode(graph)
+        
+        self.assertIs(decoded, Access.READ)
+
+    def test_int_enum_interoperability(self):
+        """
+        Scenario: IntEnum members behave like integers.
+        Verify: Decoded object retains integer properties.
+        """
+        original = Status.ACTIVE
+        graph = self.encoder.encode(original)
+        decoded = self.decoder.decode(graph)
+        
+        self.assertIs(decoded, Status.ACTIVE)
+        # Check IntEnum property: It equals the integer 1
+        self.assertEqual(decoded, 1) 
+        self.assertTrue(decoded > 0)
+
+    def test_enum_as_dict_key(self):
+        """
+        Scenario: Using Enum members as dictionary keys.
+        Verify: Since Enums are hashable and we use the 'Materialize' strategy,
+                this should work natively (unlike mutable lists).
+        """
+        data = {
+            Color.RED: "Stop",
+            Color.GREEN: "Go"
+        }
+        
+        graph = self.encoder.encode(data)
+        decoded = self.decoder.decode(graph)
+        
+        self.assertEqual(decoded[Color.RED], "Stop")
+        self.assertEqual(decoded[Color.GREEN], "Go")
+
+    def test_flag_combinations(self):
+        """
+        Scenario: Encoding a composite Flag (e.g., READ | WRITE).
+        Verify: We handle the combined value correctly.
+        
+        Note: The simple 'name' serialization strategy above works if the
+        combination is explicitly defined in the Enum (like Access.RW).
+        If it's an ad-hoc combination (Access.READ | Access.EXECUTE), it 
+        won't have a simple name.
+        """
+        # Case A: Named Combination (Access.RW)
+        original = Access.RW
+        graph = self.encoder.encode(original)
+        decoded = self.decoder.decode(graph)
+        self.assertIs(decoded, Access.RW)
+        self.assertTrue(decoded & Access.READ)
+        self.assertTrue(decoded & Access.WRITE)
+
+    def test_shared_enum_references(self):
+        """
+        Scenario: Multiple parts of a structure reference the same Enum member.
+        Verify: The graph uses a single Node for the Enum member (Optimization).
+        """
+        # List containing RED twice
+        data = [Color.RED, Color.RED]
+        
+        graph = self.encoder.encode(data)
+        
+        # Verify Graph Structure: Should have 1 List Node + 1 Enum Node
+        # (Plus the edges)
+        enum_nodes = [n for n in graph.nodes.values() if _type_of(n) == "color"]
+        self.assertEqual(len(enum_nodes), 1, f"Enum member was duplicated in the graph!: {Jgf.to_json(graph)}")
+        
+        decoded = self.decoder.decode(graph)
+        self.assertIs(decoded[0], decoded[1])
+
+    def test_decode_non_existent_member(self):
+        """
+        Scenario: The graph contains a node for 'color' with name 'PURPLE'.
+        Context: 'PURPLE' is not defined in the Color Enum.
+        Expected: KeyError during decoding (Dictionary lookup failure).
+        """
+        # 1. Create Corrupted Graph
+        graph = JgfGraph()
+        graph.add_node(JgfNode(
+            id="bad_color", 
+            metadata={"type": "color", "value": "PURPLE"} # <--- Does not exist
+        ))
+
+        # 2. Assert Crash
+        # The decoder tries Color["PURPLE"] and should fail.
+        with self.assertRaises(ValueError) as cm:
+            self.decoder.decode(graph)
+        
+        self.assertIn("'PURPLE'", str(cm.exception))
+
+    def test_decode_wrong_enum_type(self):
+        """
+        Scenario: The graph claims the type is 'color', but provides a member name 'ACTIVE'.
+        Context: 'ACTIVE' belongs to Status, not Color.
+        Expected: KeyError.
+        """
+        # 1. Create Confused Graph
+        graph = JgfGraph()
+        graph.add_node(JgfNode(
+            id="confused_node", 
+            metadata={"type": "color", "value": "ACTIVE"} # <--- Mismatch
+        ))
+
+        # 2. Assert Crash
+        with self.assertRaises(ValueError):
+            self.decoder.decode(graph)
+
+    def test_encode_unnamed_flag_combination(self):
+        """
+        Scenario: Encoding a Flag combination that doesn't have an explicit name.
+        Context: Access.READ | Access.WRITE results in an object where .name is None 
+                 (in versions < 3.11) or a composite string.
+        Expected: Success
+        """
+        # 1. Create Unnamed Combo
+        combo = Access.READ | Access.WRITE        
+        graph = self.encoder.encode(combo)
+        self.decoder.decode(graph)
+                
+    def test_decode_none_name_metadata(self):
+        """
+        Scenario: Graph metadata 'name' is None/Null.
+        Context: This simulates the result of the unnamed flag scenario above entering the decoder.
+        Expected: KeyError (cls[None] is invalid).
+        """
+        graph = JgfGraph()
+        graph.add_node(JgfNode(
+            id="null_flag", 
+            # We force skip validation here or assume validation allows None but logic doesn't
+            metadata={"type": "access", "value": None} 
+        ))
+        
+        # We need to suppress the JGF validation logic for a moment or just catch the result
+        with self.assertRaises(ValueError):
+            self.decoder.decode(graph)
+
 if __name__ == '__main__':
     unittest.main()
