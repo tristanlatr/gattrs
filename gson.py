@@ -465,6 +465,11 @@ def _make_materializer(c: type) -> Callable[[List[JgfEdge], Decoder], Any]:
         obj = object.__new__(c)
         for k, v in kwargs.items():
             object.__setattr__(obj, k, v)
+        
+        # Call __post_init__ if exists
+        if callable(post_init:=getattr(obj, "__post_init__", None)):
+            post_init()
+            
         return obj
     return _materialize
 
@@ -502,7 +507,11 @@ def _make_filler(c: type) -> Callable[[Any, List[JgfEdge], Decoder], None]:
                     setattr(obj, field.name, field.default_factory())  # type: ignore
                 else:
                     raise ValueError(f"Missing value for field '{field.name}' in dataclass '{c.__name__}' and no default is set.")
-
+        
+        # Call __post_init__ if exists
+        if callable(post_init:=getattr(obj, "__post_init__", None)):
+            post_init()
+    
     return _fill_shell
 
 if __name__ == "__main__":

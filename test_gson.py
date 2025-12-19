@@ -698,7 +698,7 @@ class TestDataclasses(unittest.TestCase):
         # 3. Corrupt it: Add an edge representing a field that doesn't exist
         # We need a target node for this field
         fake_val_id = "bad_val_node"
-        graph.add_node(JgfNode(id=fake_val_id, label="bad", metadata={"value": "hacker"}))
+        graph.add_node(JgfNode(id=fake_val_id, metadata={"value": "hacker"}))
         
         graph.add_edge(JgfEdge(
             source=root_id,
@@ -818,6 +818,65 @@ class TestDataclasses(unittest.TestCase):
         edges2 = [e for e in graph2.edges if e.relation == "dataclass/field"]
         self.assertEqual(len(edges2), 1)
         self.assertEqual(self.decoder.decode(graph2), c2)
+
+    def test_post_init_validation_success(self):
+        """
+        Scenario: Decoding data that satisfies the __post_init__ validation rules.
+        Expected: Object is created successfully.
+        """
+        @dataclasses.dataclass
+        class BankAccount:
+            balance: float
+            
+            def __post_init__(self):
+                if self.balance < 0:
+                    raise ValueError("Balance cannot be negative")
+
+        self.encoder.register_class("bankaccount", BankAccount)
+        self.decoder.register_class("bankaccount", BankAccount)
+
+        # 1. Encode valid data
+        account = BankAccount(balance=100.0)
+        graph = self.encoder.encode(account)
+
+        # 2. Decode
+        decoded = self.decoder.decode(graph)
+        self.assertEqual(decoded.balance, 100.0)
+
+    def test_post_init_validation_failure(self):
+        """
+        Scenario: Decoding data that VIOLATES the __post_init__ validation rules.
+        Expected: The decoder should raise the ValueError defined in __post_init__.
+        """
+        @dataclasses.dataclass
+        class BankAccount:
+            balance: float
+            
+            def __post_init__(self):
+                if self.balance < 0:
+                    raise ValueError("Balance cannot be negative")
+
+        self.encoder.register_class("BankAccount", BankAccount)
+        self.decoder.register_class("BankAccount", BankAccount)
+
+        # 1. Manually construct an INVALID graph (balance = -50.0)
+        graph = JgfGraph()
+        root_id = "acc_1"
+        graph.add_node(JgfNode(id=root_id, metadata={"type": "BankAccount"}))
+        
+        val_id = "val_neg"
+        graph.add_node(JgfNode(id=val_id, metadata={"value": -50.0}))
+        
+        graph.add_edge(JgfEdge(
+            source=root_id, target=val_id, 
+            relation="dataclass/field", metadata={"name": "balance"}
+        ))
+
+        # 2. Decode -> Should trigger __post_init__ -> Should Raise ValueError
+        with self.assertRaises(ValueError) as cm:
+            self.decoder.decode(graph)
+        
+        self.assertEqual(str(cm.exception), "Balance cannot be negative")
 
 if __name__ == '__main__':
     unittest.main()
